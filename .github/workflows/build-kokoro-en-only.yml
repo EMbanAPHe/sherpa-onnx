@@ -26,9 +26,14 @@ jobs:
       - name: Install Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install platform & build-tools
+      - name: Install platform, build-tools, NDK, and CMake
         run: |
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "platform-tools" \
+            "ndk;26.3.11579264" \
+            "cmake;3.22.1"
 
       - name: Prepare English-only assets (voices/tokens/lexicons) from official EN APK
         run: |
@@ -36,7 +41,7 @@ jobs:
           mkdir -p "$ASSETS_DIR"
           curl -L "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk" -o en.apk
           unzip -j en.apk "assets/model/*" -d "$ASSETS_DIR"
-          ls -lh "$ASSETS_DIR"
+          ls -lah "$ASSETS_DIR"
 
       - name: Swap ONNX model (FP32 or Q8)
         run: |
@@ -47,8 +52,8 @@ jobs:
             curl -L "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx" -o model.onnx
           else
             curl -L "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx" -o model.onnx
-            # If you prefer q8f16 instead, replace the URL above with:
-            # https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx
+            # Prefer q8f16? Replace the line above with:
+            # curl -L "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx" -o model.onnx
           fi
           ls -lh model.onnx
           # Defensive: normalize filenames if upstream renames them
