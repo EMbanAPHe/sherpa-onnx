@@ -1,0 +1,70 @@
+name: Build Kokoro EN-only (FP32 & Q8)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        profile: [fp32, q8]   # build both variants
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      APP_DIR: android/SherpaOnnxTtsEngine
+      ASSETS_DIR: android/SherpaOnnxTtsEngine/app/src/main/assets/model
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install platform & build-tools
+        run: |
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Prepare English-only assets from EN APK
+        run: |
+          set -euxo pipefail
+          mkdir -p "$ASSETS_DIR"
+          curl -L "${{ vars.EN_APK_URL }}" -o en.apk
+          # Extract ONLY the embedded model assets (voices/tokens/lexicons)
+          unzip -j en.apk "assets/model/*" -d "$ASSETS_DIR"
+          ls -lh "$ASSETS_DIR"
+
+      - name: Swap ONNX model for selected profile (FP32 or Q8)
+        run: |
+          set -euxo pipefail
+          cd "$ASSETS_DIR"
+          rm -f model.onnx || true
+          if [ "${{ matrix.profile }}" = "fp32" ]; then
+            curl -L "${{ vars.MODEL_FP32_URL }}" -o model.onnx
+          else
+            curl -L "${{ vars.MODEL_Q8_URL }}" -o model.onnx
+          fi
+          # Show sizes for sanity
+          ls -lh model.onnx
+          # Normalize token/voice filenames if needed (defensive)
+          [ -f tokens.txt ] || mv tokens* tokens.txt 2>/dev/null || true
+          [ -f voices.bin ] || mv voices* voices.bin 2>/dev/null || true
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x $APP_DIR/gradlew
+
+      - name: Assemble Release (arm64-v8a)
+        working-directory: ${{ env.APP_DIR }}
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kokoro-en-${{ matrix.profile }}
+          path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/release/*.apk
