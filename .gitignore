@@ -156,3 +156,6 @@ am.mvn
 *bpe.model
 config.yaml
 configuration.json
+# TTS engine model assets are downloaded at build time in CI; don't commit them.
+android/SherpaOnnxTtsEngine/app/src/main/assets/model/**
+!android/SherpaOnnxTtsEngine/app/src/main/assets/.keep
