@@ -1,4 +1,3 @@
-# Updated from the user-attached workflow file  0
 name: Build Kokoro EN-only (FP32 & Q8)
 
 on:
@@ -31,83 +30,42 @@ jobs:
       - name: Install platform, build-tools, NDK, CMake + accept licenses
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eux
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "ndk;26.3.11579264" \
-            "cmake;3.22.1"
-          echo "Installed NDKs:"
-          ls -al "$ANDROID_SDK_ROOT/ndk" || true
+          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
 
-      - name: Prepare English-only assets from official EN APK (voices/tokens/lexicons)
+      - name: Prepare English-only assets (voices/tokens/lexicons)
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eux
           mkdir -p "$ASSETS_DIR"
-
-          # Download English-only Kokoro Engine APK
-          curl -fL --retry 3 --retry-delay 5 \
-            -H "Accept: application/octet-stream" \
-            -o en.apk \
-            "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
-
-          # Extract all assets to a temp dir (layout can vary between APKs)
+          curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o en.apk "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
           TMP_ASSETS="$(mktemp -d)"
           unzip -q en.apk -d "$TMP_ASSETS"
-
-          echo "APK assets (first 200 lines):"
-          find "$TMP_ASSETS/assets" -type f | head -n 200 || true
-
-          # Copy required files into a flat assets/model/ folder
           find "$TMP_ASSETS" -iname 'tokens.txt' -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
           find "$TMP_ASSETS" -iname 'voices.bin' -exec cp -v {} "$ASSETS_DIR/voices.bin" \; || true
           find "$TMP_ASSETS" -iname 'lexicon-us-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-us-en.txt" \; || true
           find "$TMP_ASSETS" -iname 'lexicon-gb-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-gb-en.txt" \; || true
-
-          echo "Final files in $ASSETS_DIR:"
-          ls -lah "$ASSETS_DIR"
-
-          # Fail fast if core files are missing
           test -f "$ASSETS_DIR/tokens.txt"
           test -f "$ASSETS_DIR/voices.bin"
 
       - name: Swap ONNX model (FP32 or Q8)
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eux
           cd "$ASSETS_DIR"
           rm -f model.onnx || true
-
           if [ "${{ matrix.profile }}" = "fp32" ]; then
             MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx"
           else
             MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx"
-            # Prefer Q8F16 instead? uncomment next line:
-            # MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx"
           fi
-
-          curl -fL --retry 3 --retry-delay 5 \
-            -H "Accept: application/octet-stream" \
-            -o model.onnx \
-            "$MODEL_URL"
-
-          echo "Final files in assets/model:"
-          ls -lah .
-
-          # Sanity check
+          curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o model.onnx "$MODEL_URL"
           test -f model.onnx
-          test -f tokens.txt
-          test -f voices.bin
 
       - name: Make Gradle wrapper executable
         run: chmod +x $APP_DIR/gradlew
 
-      # ---------------------
-      # Build DEBUG (signed with default debug keystore)
-      # ---------------------
       - name: Assemble Debug (arm64-v8a)
         working-directory: ${{ env.APP_DIR }}
         env:
@@ -119,4 +77,4 @@ jobs:
         with:
           name: kokoro-en-${{ matrix.profile }}-debug
           path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk
-```1
+```0
