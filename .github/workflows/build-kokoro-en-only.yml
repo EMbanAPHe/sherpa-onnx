@@ -71,6 +71,10 @@ jobs:
         ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.3.11579264
       run: ./gradlew --no-daemon assembleDebug
 
+    - name: Show packaged assets (debug build)
+  run: |
+    unzip -Z1 android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk | sed -n '/^assets\/model\//p' || true
+    
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
