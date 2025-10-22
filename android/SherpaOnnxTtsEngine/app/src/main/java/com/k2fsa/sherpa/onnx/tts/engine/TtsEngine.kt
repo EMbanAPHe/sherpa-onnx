@@ -13,40 +13,32 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 
+private const val TAG = "TtsEngine"
+
 object TtsEngine {
     var tts: OfflineTts? = null
 
     // https://en.wikipedia.org/wiki/ISO_639-3
-    // Example:
-    // eng for English,
-    // deu for German
-    // cmn for Mandarin
     var lang: String? = null
-
-    // if a model supports two languages, set also lang2
     var lang2: String? = null
-
 
     val speedState: MutableState<Float> = mutableFloatStateOf(1.0F)
     val speakerIdState: MutableState<Int> = mutableIntStateOf(0)
 
     var speed: Float
         get() = speedState.value
-        set(value) {
-            speedState.value = value
-        }
+        set(value) { speedState.value = value }
 
     var speakerId: Int
         get() = speakerIdState.value
-        set(value) {
-            speakerIdState.value = value
-        }
+        set(value) { speakerIdState.value = value }
 
+    // Model configuration fields (nullable to allow CI/runtime injection)
     private var modelDir: String? = null
     private var modelName: String? = null
-    private var acousticModelName: String? = null // for matcha tts
-    private var vocoder: String? = null // for matcha tts
-    private var voices: String? = null // for kokoro
+    private var acousticModelName: String? = null // Matcha
+    private var vocoder: String? = null          // Matcha
+    private var voices: String? = null           // Kokoro
     private var ruleFsts: String? = null
     private var ruleFars: String? = null
     private var lexicon: String? = null
@@ -55,23 +47,11 @@ object TtsEngine {
     private var isKitten = false
 
     init {
-        // The purpose of such a design is to make the CI test easier
-        // Please see
-        // https://github.com/k2-fsa/sherpa-onnx/blob/master/scripts/apk/generate-tts-apk-script.py
-        //
-        // For VITS -- begin
+        // CI-friendly defaults: nothing hard-coded; we'll auto-detect below
         modelName = null
-        // For VITS -- end
-
-        // For Matcha -- begin
         acousticModelName = null
         vocoder = null
-        // For Matcha -- end
-
-        // For Kokoro -- begin
         voices = null
-        // For Kokoro -- end
-
         modelDir = null
         ruleFsts = null
         ruleFars = null
@@ -79,103 +59,9 @@ object TtsEngine {
         dataDir = null
         lang = null
         lang2 = null
-
-        // Please enable one and only one of the examples below
-
-        // Example 1:
-        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-vctk.tar.bz2
-        // modelDir = "vits-vctk"
-        // modelName = "vits-vctk.onnx"
-        // lexicon = "lexicon.txt"
-        // lang = "eng"
-
-        // Example 2:
-        // https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
-        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2
-        // modelDir = "vits-piper-en_US-amy-low"
-        // modelName = "en_US-amy-low.onnx"
-        // dataDir = "vits-piper-en_US-amy-low/espeak-ng-data"
-        // lang = "eng"
-
-        // Example 3:
-        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-icefall-zh-aishell3.tar.bz2
-        // modelDir = "vits-icefall-zh-aishell3"
-        // modelName = "model.onnx"
-        // ruleFars = "vits-icefall-zh-aishell3/rule.far"
-        // lexicon = "lexicon.txt"
-        // lang = "zho"
-
-        // Example 4:
-        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/vits.html#csukuangfj-vits-zh-hf-fanchen-c-chinese-187-speakers
-        // modelDir = "vits-zh-hf-fanchen-C"
-        // modelName = "vits-zh-hf-fanchen-C.onnx"
-        // lexicon = "lexicon.txt"
-        // lang = "zho"
-
-        // Example 5:
-        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-coqui-de-css10.tar.bz2
-        // This model does not need lexicon or dataDir
-        // modelDir = "vits-coqui-de-css10"
-        // modelName = "model.onnx"
-        // lang = "deu"
-
-        // Example 6
-        // vits-melo-tts-zh_en
-        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/vits.html#vits-melo-tts-zh-en-chinese-english-1-speaker
-        // modelDir = "vits-melo-tts-zh_en"
-        // modelName = "model.onnx"
-        // lexicon = "lexicon.txt"
-        // lang = "zho"
-        // lang2 = "eng"
-
-        // Example 7
-        // matcha-icefall-zh-baker
-        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/matcha.html#matcha-icefall-zh-baker-chinese-1-female-speaker
-        // modelDir = "matcha-icefall-zh-baker"
-        // acousticModelName = "model-steps-3.onnx"
-        // vocoder = "vocos-22khz-univ.onnx"
-        // lexicon = "lexicon.txt"
-        // lang = "zho"
-
-        // Example 8
-        // matcha-icefall-en_US-ljspeech
-        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/matcha.html#matcha-icefall-en-us-ljspeech-american-english-1-female-speaker
-        // modelDir = "matcha-icefall-en_US-ljspeech"
-        // acousticModelName = "model-steps-3.onnx"
-        // vocoder = "vocos-22khz-univ.onnx"
-        // dataDir = "matcha-icefall-en_US-ljspeech/espeak-ng-data"
-        // lang = "eng"
-
-        // Example 9
-        // kokoro-en-v0_19
-        // modelDir = "kokoro-en-v0_19"
-        // modelName = "model.onnx"
-        // voices = "voices.bin"
-        // dataDir = "kokoro-en-v0_19/espeak-ng-data"
-        // lang = "eng"
-
-        // Example 10
-        // kokoro-multi-lang-v1_0
-        // modelDir = "kokoro-multi-lang-v1_0"
-        // modelName = "model.onnx"
-        // voices = "voices.bin"
-        // dataDir = "kokoro-multi-lang-v1_0/espeak-ng-data"
-        // lexicon = "kokoro-multi-lang-v1_0/lexicon-us-en.txt,kokoro-multi-lang-v1_0/lexicon-zh.txt"
-        // lang = "eng"
-        // lang2 = "zho"
-        // ruleFsts = "$modelDir/phone-zh.fst,$modelDir/date-zh.fst,$modelDir/number-zh.fst"
-        //
-        // This model supports many languages, e.g., English, Chinese, etc.
-        // We set lang to eng here.
-
-        // Example 11
-        // kitten-nano-en-v0_1-fp16
-        // modelDir = "kitten-nano-en-v0_1-fp16"
-        // modelName = "model.fp16.onnx"
-        // voices = "voices.bin"
-        // dataDir = "kitten-nano-en-v0_1-fp16/espeak-ng-data"
-        // lang = "eng"
-        // isKitten = true
+        // isKitten = false
+        // If you want to pin a specific model, you can set the fields above.
+        // Otherwise, we auto-detect "assets/model/" laid down by the CI workflow.
     }
 
     fun createTts(context: Context) {
@@ -185,57 +71,131 @@ object TtsEngine {
         }
     }
 
+    /**
+     * Be robust:
+     * - Auto-detect the model directory (prefer "assets/model/").
+     * - Avoid !! on nullable fields.
+     * - Validate required files to prevent NPEs.
+     */
     private fun initTts(context: Context) {
-        assets = context.assets
+        try {
+            assets = context.assets
+            val am = assets!!
 
-        if (dataDir != null) {
-            val newDir = copyDataDir(context, dataDir!!)
-            dataDir = "$newDir/$dataDir"
+            // 1) Detect model directory if not set (our CI puts files in assets/model/)
+            val finalModelDir = modelDir ?: findModelDir(am)
+            if (finalModelDir == null) {
+                Log.e(TAG, "No model directory found in assets. Expected 'model/model.onnx'.")
+                return
+            }
+
+            // 2) Default filenames for Kokoro-style packs
+            val finalModelName = modelName ?: "model.onnx"
+            val hasVoices = assetExists(am, "$finalModelDir/voices.bin")
+            val finalVoices = voices ?: if (hasVoices) "voices.bin" else ""
+
+            // Optional lexicons (English)
+            val lexUs = if (assetExists(am, "$finalModelDir/lexicon-us-en.txt")) "$finalModelDir/lexicon-us-en.txt" else ""
+            val lexGb = if (assetExists(am, "$finalModelDir/lexicon-gb-en.txt")) "$finalModelDir/lexicon-gb-en.txt" else ""
+            // getOfflineTtsConfig accepts either empty string or comma-separated list
+            val finalLexicon = when {
+                lexicon != null -> lexicon!!
+                lexUs.isNotEmpty() && lexGb.isNotEmpty() -> "$lexUs,$lexGb"
+                lexUs.isNotEmpty() -> lexUs
+                lexGb.isNotEmpty() -> lexGb
+                else -> ""
+            }
+
+            // 3) If an embedded espeak-ng-data exists, copy it to external files and point dataDir there
+            val embeddedEspeak = "$finalModelDir/espeak-ng-data"
+            val finalDataDir = when {
+                dataDir != null -> {
+                    val newRoot = copyDataDir(context, dataDir!!)
+                    "$newRoot/${dataDir!!}"
+                }
+                assetExistsDir(am, embeddedEspeak) -> {
+                    val newRoot = copyDataDir(context, embeddedEspeak)
+                    "$newRoot/$embeddedEspeak"
+                }
+                else -> ""
+            }
+
+            // 4) Build config
+            val config = getOfflineTtsConfig(
+                modelDir = finalModelDir,
+                modelName = finalModelName,
+                acousticModelName = acousticModelName ?: "",
+                vocoder = vocoder ?: "",
+                voices = finalVoices,
+                lexicon = finalLexicon,
+                dataDir = finalDataDir,
+                dictDir = "",
+                ruleFsts = ruleFsts ?: "",
+                ruleFars = ruleFars ?: "",
+                isKitten = isKitten,
+            )
+
+            // 5) Load user prefs
+            speed = PreferenceHelper(context).getSpeed()
+            speakerId = PreferenceHelper(context).getSid()
+
+            // 6) Create engine (use AssetManager for assets-backed loading)
+            tts = OfflineTts(assetManager = am, config = config)
+            Log.i(TAG, "TTS initialized (dir=$finalModelDir, model=$finalModelName)")
+        } catch (t: Throwable) {
+            Log.e(TAG, "TTS init failed: ${t.message}", t)
+            tts = null
         }
-
-        val config = getOfflineTtsConfig(
-            modelDir = modelDir!!,
-            modelName = modelName ?: "",
-            acousticModelName = acousticModelName ?: "",
-            vocoder = vocoder ?: "",
-            voices = voices ?: "",
-            lexicon = lexicon ?: "",
-            dataDir = dataDir ?: "",
-            dictDir = "",
-            ruleFsts = ruleFsts ?: "",
-            ruleFars = ruleFars ?: "",
-            isKitten = isKitten,
-        )
-
-        speed = PreferenceHelper(context).getSpeed()
-        speakerId = PreferenceHelper(context).getSid()
-
-        tts = OfflineTts(assetManager = assets, config = config)
     }
 
+    // ---------- Helpers ----------
+
+    private fun findModelDir(am: AssetManager): String? {
+        // Prefer CI layout: assets/model/model.onnx
+        return when {
+            assetExists(am, "model/model.onnx") -> "model"
+            assetExists(am, "kokoro-en-v0_19/model.onnx") -> "kokoro-en-v0_19"
+            assetExists(am, "kokoro-multi-lang-v1_0/model.onnx") -> "kokoro-multi-lang-v1_0"
+            assetExists(am, "kitten-nano-en-v0_1-fp16/model.fp16.onnx") -> "kitten-nano-en-v0_1-fp16"
+            else -> null
+        }
+    }
+
+    private fun assetExists(am: AssetManager, path: String): Boolean =
+        try {
+            am.open(path).close()
+            true
+        } catch (_: Exception) {
+            false
+        }
+
+    // Coarse directory existence check: try listing it
+    private fun assetExistsDir(am: AssetManager, path: String): Boolean =
+        try {
+            am.list(path)?.isNotEmpty() == true
+        } catch (_: Exception) {
+            false
+        }
 
     private fun copyDataDir(context: Context, dataDir: String): String {
-        Log.i(TAG, "data dir is $dataDir")
+        Log.i(TAG, "Copying data dir from assets: $dataDir")
         copyAssets(context, dataDir)
-
         val newDataDir = context.getExternalFilesDir(null)!!.absolutePath
         Log.i(TAG, "newDataDir: $newDataDir")
         return newDataDir
     }
 
     private fun copyAssets(context: Context, path: String) {
-        val assets: Array<String>?
         try {
-            assets = context.assets.list(path)
-            if (assets!!.isEmpty()) {
+            val list = context.assets.list(path)
+            if (list == null || list.isEmpty()) {
                 copyFile(context, path)
             } else {
                 val fullPath = "${context.getExternalFilesDir(null)}/$path"
-                val dir = File(fullPath)
-                dir.mkdirs()
-                for (asset in assets.iterator()) {
-                    val p: String = if (path == "") "" else "$path/"
-                    copyAssets(context, p + asset)
+                File(fullPath).mkdirs()
+                for (name in list) {
+                    val next = if (path.isEmpty()) name else "$path/$name"
+                    copyAssets(context, next)
                 }
             }
         } catch (ex: IOException) {
@@ -245,21 +205,21 @@ object TtsEngine {
 
     private fun copyFile(context: Context, filename: String) {
         try {
-            val istream = context.assets.open(filename)
-            val newFilename = context.getExternalFilesDir(null).toString() + "/" + filename
-            val ostream = FileOutputStream(newFilename)
-            // Log.i(TAG, "Copying $filename to $newFilename")
-            val buffer = ByteArray(1024)
-            var read = 0
-            while (read != -1) {
-                ostream.write(buffer, 0, read)
-                read = istream.read(buffer)
+            context.assets.open(filename).use { ins ->
+                val outPath = "${context.getExternalFilesDir(null)}/$filename"
+                File(outPath).parentFile?.mkdirs()
+                FileOutputStream(outPath).use { outs ->
+                    val buf = ByteArray(8 * 1024)
+                    var read: Int
+                    while (ins.read(buf).also { read = it } != -1) {
+                        outs.write(buf, 0, read)
+                    }
+                    outs.flush()
+                }
             }
-            istream.close()
-            ostream.flush()
-            ostream.close()
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to copy $filename, $ex")
         }
     }
 }
+```0
