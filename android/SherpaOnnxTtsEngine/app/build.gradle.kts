@@ -13,6 +13,7 @@ android {
         targetSdk = 34
         versionCode = 20250918
         versionName = "1.12.14"
+        ndk { abiFilters "arm64-v8a" }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
