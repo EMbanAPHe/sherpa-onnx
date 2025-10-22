@@ -5,10 +5,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         profile: [fp32, q8]
+
     env:
       APP_DIR: android/SherpaOnnxTtsEngine
       ASSETS_DIR: android/SherpaOnnxTtsEngine/app/src/main/assets/model
@@ -24,71 +25,91 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # One step installs SDK + accepts licenses non-interactively
-      - name: Set up Android SDK
+      - name: Set up Android SDK (pin cmdline-tools)
         uses: android-actions/setup-android@v3
         with:
+          # Pin to silence the “Wrong version in preinstalled sdkmanager” message
           cmdline-tools-version: 12266719
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: true
-          packages: |
-            platform-tools
-            platforms;android-34
-            build-tools;34.0.0
-            ndk;26.3.11579264
-            cmake;3.22.1
 
-      - name: Download Kokoro model assets
+      - name: Install SDK components (non-interactive)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses || true
+          yes | sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;26.3.11579264" \
+            "cmake;3.22.1"
+
+      - name: Prepare English assets
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p "$ASSETS_DIR"
+          curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o en.apk \
+            "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
+          TMP_ASSETS="$(mktemp -d)"
+          unzip -q en.apk -d "$TMP_ASSETS"
+          # Pull the data files we need from the reference APK
+          find "$TMP_ASSETS" -iname 'tokens.txt' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/tokens.txt"
+          find "$TMP_ASSETS" -iname 'voices.bin' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/voices.bin"
+          find "$TMP_ASSETS" -iname 'lexicon-us-en.txt' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/lexicon-us-en.txt" || true
+          find "$TMP_ASSETS" -iname 'lexicon-gb-en.txt' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/lexicon-gb-en.txt" || true
+          test -f "$ASSETS_DIR/tokens.txt"
+          test -f "$ASSETS_DIR/voices.bin"
+
+      - name: Swap ONNX model (fp32 vs q8)
+        shell: bash
+        run: |
+          set -euxo pipefail
           cd "$ASSETS_DIR"
-
+          rm -f model.onnx || true
           if [ "${{ matrix.profile }}" = "fp32" ]; then
-            MODEL_DIR="kokoro-en-v0_19"
-            MODEL_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2"
+            MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx"
           else
-            MODEL_DIR="kokoro-en-q8"
-            MODEL_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-q8.tar.bz2"
+            MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx"
           fi
+          curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o model.onnx "$MODEL_URL"
+          test -f model.onnx
 
-          curl -fL --retry 3 --retry-delay 5 -o model.tar.bz2 "$MODEL_URL"
-          tar -xjf model.tar.bz2
-          rm -f model.tar.bz2
-
-          # Ensure we have a standard filename for the model
-          if [ ! -f "$MODEL_DIR/model.onnx" ]; then
-            ONNX=$(ls "$MODEL_DIR"/*.onnx | head -n1 || true)
-            if [ -n "$ONNX" ]; then mv "$ONNX" "$MODEL_DIR/model.onnx"; fi
-          fi
-
-          # Sanity checks
-          test -f "$MODEL_DIR/model.onnx"
-          test -f "$MODEL_DIR/voices.bin"
-          # Kokoro EN ships espeak-ng-data; if not, the build should still proceed
-          if [ -d "$MODEL_DIR/espeak-ng-data" ]; then
-            echo "Found espeak-ng-data"
+      - name: Locate Gradle wrapper
+        id: gw
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -x "${APP_DIR}/gradlew" ]; then
+            echo "wrapper=${APP_DIR}/gradlew" >> "$GITHUB_OUTPUT"
+          elif [ -x "./gradlew" ]; then
+            echo "wrapper=./gradlew" >> "$GITHUB_OUTPUT"
           else
-            echo "WARNING: espeak-ng-data not found in $MODEL_DIR"
+            echo "Gradle wrapper not found in ${APP_DIR} or repo root."
+            echo "Contents of ${APP_DIR}:"
+            ls -la "${APP_DIR}" || true
+            exit 1
           fi
 
-          # Show what we fetched
-          find "$MODEL_DIR" -maxdepth 2 -type f -printf '%P\n' | sort
-
-      - name: Make Gradle wrapper executable
-        run: chmod +x ${{ env.APP_DIR }}/gradlew
+      - name: Make Gradle wrapper executable & show version
+        shell: bash
+        run: |
+          set -euxo pipefail
+          chmod +x "${{ steps.gw.outputs.wrapper }}"
+          "${{ steps.gw.outputs.wrapper }}" --version
+        working-directory: ${{ env.APP_DIR }}
 
       - name: Assemble Debug
         working-directory: ${{ env.APP_DIR }}
         env:
           ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.3.11579264
-        run: ./gradlew --no-daemon assembleDebug
+        run: ${{ steps.gw.outputs.wrapper }} --no-daemon assembleDebug
 
       - name: Show packaged assets (debug APK)
         shell: bash
         run: |
-          set -eux
+          set -euxo pipefail
           APK="${{ env.APP_DIR }}/app/build/outputs/apk/debug/app-debug.apk"
           unzip -Z1 "$APK" | sed -n '/^assets\/model\//p' || true
 
