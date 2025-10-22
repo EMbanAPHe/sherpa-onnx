@@ -25,25 +25,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK (pin cmdline-tools)
+      # ⬇️ Let the action install everything and accept licenses
+      - name: Set up Android SDK + packages
         uses: android-actions/setup-android@v3
         with:
-          # Pin to silence the “Wrong version in preinstalled sdkmanager” message
+          # Pin to a stable cmdline-tools to avoid version mismatch warnings
           cmdline-tools-version: 12266719
-          accept-android-sdk-licenses: true
-          log-accepted-android-sdk-licenses: true
-
-      - name: Install SDK components (non-interactive)
-        shell: bash
-        run: |
-          set -euxo pipefail
-          yes | sdkmanager --licenses || true
-          yes | sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "ndk;26.3.11579264" \
-            "cmake;3.22.1"
+          packages: |
+            platform-tools
+            platforms;android-34
+            build-tools;34.0.0
+            ndk;26.3.11579264
+            cmake;3.22.1
 
       - name: Prepare English assets
         shell: bash
@@ -54,7 +47,7 @@ jobs:
             "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
           TMP_ASSETS="$(mktemp -d)"
           unzip -q en.apk -d "$TMP_ASSETS"
-          # Pull the data files we need from the reference APK
+          # copy only what we need
           find "$TMP_ASSETS" -iname 'tokens.txt' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/tokens.txt"
           find "$TMP_ASSETS" -iname 'voices.bin' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/voices.bin"
           find "$TMP_ASSETS" -iname 'lexicon-us-en.txt' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/lexicon-us-en.txt" || true
@@ -87,7 +80,6 @@ jobs:
             echo "wrapper=./gradlew" >> "$GITHUB_OUTPUT"
           else
             echo "Gradle wrapper not found in ${APP_DIR} or repo root."
-            echo "Contents of ${APP_DIR}:"
             ls -la "${APP_DIR}" || true
             exit 1
           fi
@@ -98,7 +90,6 @@ jobs:
           set -euxo pipefail
           chmod +x "${{ steps.gw.outputs.wrapper }}"
           "${{ steps.gw.outputs.wrapper }}" --version
-        working-directory: ${{ env.APP_DIR }}
 
       - name: Assemble Debug
         working-directory: ${{ env.APP_DIR }}
