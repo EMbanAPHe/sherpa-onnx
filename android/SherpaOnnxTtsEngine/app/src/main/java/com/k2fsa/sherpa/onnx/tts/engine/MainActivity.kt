@@ -1,9 +1,7 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 
 package com.k2fsa.sherpa.onnx.tts.engine
 
-import PreferenceHelper
-import android.app.ComponentActivity
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -12,7 +10,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
-import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
@@ -21,14 +19,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.k2fsa.sherpa.onnx.tts.engine.ui.theme.SherpaOnnxTtsEngineTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.io.File
+
+private const val TAG = "sherpa-onnx-tts-engine"
 
 class MainActivity : ComponentActivity() {
 
@@ -37,35 +35,17 @@ class MainActivity : ComponentActivity() {
 
     private var mediaPlayer: MediaPlayer? = null
 
-    // AudioTrack is created after TTS is initialized
+    // see https://developer.android.com/reference/kotlin/android/media/AudioTrack
     private lateinit var track: AudioTrack
 
     private var stopped: Boolean = false
-    private var samplesChannel = Channel<FloatArray>(capacity = Channel.UNLIMITED)
+    private val samplesChannel = Channel<FloatArray>(capacity = Channel.UNLIMITED)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         Log.i(TAG, "Start to initialize TTS")
-        TtsEngine.createTts(this)
-        val tts = TtsEngine.tts
-        if (tts == null) {
-            Log.e(TAG, "TTS init failed (null). Check logs / assets.")
-            Toast.makeText(this, "TTS init failed. Missing/invalid assets.", Toast.LENGTH_LONG).show()
-            setContent {
-                SherpaOnnxTtsEngineTheme {
-                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                        Box(Modifier.fillMaxSize().padding(24.dp)) {
-                            Text(
-                                "TTS init failed. Please reinstall or check model assets.",
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            }
-            return
-        }
+        TtsEngine.createTts(this)  // NOTE: TtsEngine must have a non-null modelDir configured
         Log.i(TAG, "Finish initializing TTS")
 
         Log.i(TAG, "Start to initialize AudioTrack")
@@ -80,12 +60,16 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    Scaffold(topBar = {
-                        TopAppBar(title = { Text("Next-gen Kaldi: TTS Engine") })
-                    }) { padding ->
-                        Box(modifier = Modifier.padding(padding)) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                // Speed control
+                    Scaffold(
+                        topBar = { TopAppBar(title = { Text("Next-gen Kaldi: TTS Engine") }) }
+                    ) { pad ->
+                        Box(modifier = Modifier.padding(pad)) {
+                            Column(
+                                modifier = Modifier
+                                    .padding(16.dp)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                // Speed slider
                                 Column {
                                     Text("Speed " + String.format("%.1f", TtsEngine.speed))
                                     Slider(
@@ -104,19 +88,41 @@ class MainActivity : ComponentActivity() {
                                 var startEnabled by remember { mutableStateOf(true) }
                                 var playEnabled by remember { mutableStateOf(false) }
                                 var rtfText by remember { mutableStateOf("") }
-                                val scrollState = rememberScrollState(0)
 
-                                // Buttons row (Start / Play / Stop)
+                                Spacer(Modifier.height(8.dp))
+
+                                // Buttons row
                                 Row {
                                     Button(
-                                        enabled = startEnabled,
                                         modifier = Modifier.padding(5.dp),
+                                        enabled = startEnabled,
                                         onClick = {
-                                            // your generation logic…
-                                            playEnabled = false
                                             startEnabled = false
+                                            playEnabled = false
+                                            rtfText = ""
                                             stopped = false
-                                            // launch synthesis coroutine etc.
+
+                                            // Example generation to a wav file; adjust to your TTS API.
+                                            CoroutineScope(Dispatchers.Default).launch {
+                                                runCatching {
+                                                    val out = File(filesDir, "generated.wav").absolutePath
+                                                    TtsEngine.tts?.let { tts ->
+                                                        // Replace with the actual synthesize API you use
+                                                        tts.generate(
+                                                            text = testText,
+                                                            sid = TtsEngine.speakerId,
+                                                            speed = TtsEngine.speed,
+                                                            outputWavePath = out
+                                                        )
+                                                    }
+                                                }.onSuccess {
+                                                    playEnabled = true
+                                                    rtfText = "RTF: n/a"
+                                                }.onFailure { e ->
+                                                    Log.e(TAG, "TTS generation failed", e)
+                                                    startEnabled = true
+                                                }
+                                            }
                                         }
                                     ) { Text("Start") }
 
@@ -125,11 +131,9 @@ class MainActivity : ComponentActivity() {
                                         enabled = playEnabled,
                                         onClick = {
                                             stopped = true
-                                            if (::track.isInitialized) {
-                                                try {
-                                                    track.pause()
-                                                    track.flush()
-                                                } catch (_: Throwable) { }
+                                            if (this@MainActivity::track.isInitialized) {
+                                                track.pause()
+                                                track.flush()
                                             }
                                             onClickPlay()
                                         }
@@ -157,17 +161,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         stopMediaPlayer()
+        if (this::track.isInitialized) {
+            track.release()
+        }
         super.onDestroy()
     }
 
     private fun stopMediaPlayer() {
-        try { mediaPlayer?.stop() } catch (_: Throwable) { }
+        mediaPlayer?.stop()
         mediaPlayer?.release()
         mediaPlayer = null
     }
 
     private fun onClickPlay() {
-        val filename = application.filesDir.absolutePath + "/generated.wav"
+        val filename = File(filesDir, "generated.wav").absolutePath
         stopMediaPlayer()
         mediaPlayer = MediaPlayer.create(
             applicationContext,
@@ -178,42 +185,35 @@ class MainActivity : ComponentActivity() {
 
     private fun onClickStop() {
         stopped = true
-        if (::track.isInitialized) {
-            try {
-                track.pause()
-                track.flush()
-            } catch (_: Throwable) { }
+        if (this::track.isInitialized) {
+            track.pause()
+            track.flush()
         }
         stopMediaPlayer()
     }
 
-    // this function is called from C++
-    @Suppress("unused")
+    // Example callback if you later wire streaming synthesis
+    @Suppress("UNUSED_PARAMETER")
     private fun callback(samples: FloatArray): Int {
-        if (!stopped) {
-            val samplesCopy = samples.copyOf()
-            CoroutineScope(Dispatchers.IO).launch {
-                samplesChannel.send(samplesCopy)
-            }
-            return 1
+        return if (!stopped) {
+            val copy = samples.copyOf()
+            CoroutineScope(Dispatchers.IO).launch { samplesChannel.send(copy) }
+            1
         } else {
-            if (::track.isInitialized) {
-                try { track.stop() } catch (_: Throwable) { }
-            }
+            if (this::track.isInitialized) track.stop()
             Log.i(TAG, " return 0")
-            return 0
+            0
         }
     }
 
     private fun initAudioTrack() {
-        val sampleRate = TtsEngine.tts?.sampleRate() ?: 24_000
-        var bufLength = AudioTrack.getMinBufferSize(
-            sampleRate,
+        val sr = TtsEngine.tts?.sampleRate() ?: 22050
+        val buf = AudioTrack.getMinBufferSize(
+            sr,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_FLOAT
         )
-        if (bufLength <= 0) bufLength = sampleRate
-        Log.i(TAG, "sampleRate: $sampleRate, buffLength: $bufLength")
+        Log.i(TAG, "sampleRate: $sr, buffLength: $buf")
 
         val attr = AudioAttributes.Builder()
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -223,20 +223,13 @@ class MainActivity : ComponentActivity() {
         val format = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-            .setSampleRate(sampleRate)
+            .setSampleRate(sr)
             .build()
 
         track = AudioTrack(
-            attr, format, bufLength, AudioTrack.MODE_STREAM,
+            attr, format, buf, AudioTrack.MODE_STREAM,
             AudioManager.AUDIO_SESSION_ID_GENERATE
         )
-        try { track.play() } catch (_: Throwable) { }
+        track.play()
     }
 }
-
-/** Fallback sample text if none is provided. */
-private fun getSampleText(lang: String): String =
-    when (lang.lowercase()) {
-        "eng", "en", "en-us", "en-gb" -> "How are you doing today? This is a text to speech engine."
-        else -> "Hello. This is a text to speech engine demo."
-    }
