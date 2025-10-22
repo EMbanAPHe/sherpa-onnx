@@ -38,7 +38,8 @@ jobs:
       run: |
         set -eux
         mkdir -p "$ASSETS_DIR"
-        curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o en.apk "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
+        curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o en.apk \
+          "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
         TMP_ASSETS="$(mktemp -d)"
         unzip -q en.apk -d "$TMP_ASSETS"
         find "$TMP_ASSETS" -iname 'tokens.txt' -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
@@ -71,10 +72,13 @@ jobs:
         ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.3.11579264
       run: ./gradlew --no-daemon assembleDebug
 
-    - name: Show packaged assets (debug build)
-  run: |
-    unzip -Z1 android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk | sed -n '/^assets\/model\//p' || true
-    
+    - name: Show packaged assets (debug APK)
+      shell: bash
+      run: |
+        set -eux
+        APK="${{ env.APP_DIR }}/app/build/outputs/apk/debug/app-debug.apk"
+        unzip -Z1 "$APK" | sed -n '/^assets\/model\//p' || true
+
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
