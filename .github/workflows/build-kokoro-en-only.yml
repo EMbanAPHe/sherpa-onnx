@@ -25,12 +25,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # ⬇️ Let the action install everything and accept licenses
       - name: Set up Android SDK + packages
         uses: android-actions/setup-android@v3
         with:
-          # Pin to a stable cmdline-tools to avoid version mismatch warnings
-          cmdline-tools-version: 12266719
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: true
           packages: |
             platform-tools
             platforms;android-34
@@ -38,27 +37,29 @@ jobs:
             ndk;26.3.11579264
             cmake;3.22.1
 
+      - name: Make Gradle wrapper executable
+        run: chmod +x "${{ env.APP_DIR }}/gradlew"
+
       - name: Prepare English assets
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eux
           mkdir -p "$ASSETS_DIR"
           curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o en.apk \
             "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
           TMP_ASSETS="$(mktemp -d)"
           unzip -q en.apk -d "$TMP_ASSETS"
-          # copy only what we need
-          find "$TMP_ASSETS" -iname 'tokens.txt' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/tokens.txt"
-          find "$TMP_ASSETS" -iname 'voices.bin' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/voices.bin"
-          find "$TMP_ASSETS" -iname 'lexicon-us-en.txt' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/lexicon-us-en.txt" || true
-          find "$TMP_ASSETS" -iname 'lexicon-gb-en.txt' -print -quit | xargs -rI{} cp -v "{}" "$ASSETS_DIR/lexicon-gb-en.txt" || true
+          find "$TMP_ASSETS" -iname 'tokens.txt' -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
+          find "$TMP_ASSETS" -iname 'voices.bin' -exec cp -v {} "$ASSETS_DIR/voices.bin" \; || true
+          find "$TMP_ASSETS" -iname 'lexicon-us-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-us-en.txt" \; || true
+          find "$TMP_ASSETS" -iname 'lexicon-gb-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-gb-en.txt" \; || true
           test -f "$ASSETS_DIR/tokens.txt"
           test -f "$ASSETS_DIR/voices.bin"
 
-      - name: Swap ONNX model (fp32 vs q8)
+      - name: Swap ONNX model (FP32 or Q8)
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eux
           cd "$ASSETS_DIR"
           rm -f model.onnx || true
           if [ "${{ matrix.profile }}" = "fp32" ]; then
@@ -69,38 +70,16 @@ jobs:
           curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o model.onnx "$MODEL_URL"
           test -f model.onnx
 
-      - name: Locate Gradle wrapper
-        id: gw
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -x "${APP_DIR}/gradlew" ]; then
-            echo "wrapper=${APP_DIR}/gradlew" >> "$GITHUB_OUTPUT"
-          elif [ -x "./gradlew" ]; then
-            echo "wrapper=./gradlew" >> "$GITHUB_OUTPUT"
-          else
-            echo "Gradle wrapper not found in ${APP_DIR} or repo root."
-            ls -la "${APP_DIR}" || true
-            exit 1
-          fi
-
-      - name: Make Gradle wrapper executable & show version
-        shell: bash
-        run: |
-          set -euxo pipefail
-          chmod +x "${{ steps.gw.outputs.wrapper }}"
-          "${{ steps.gw.outputs.wrapper }}" --version
-
       - name: Assemble Debug
         working-directory: ${{ env.APP_DIR }}
         env:
-          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.3.11579264
-        run: ${{ steps.gw.outputs.wrapper }} --no-daemon assembleDebug
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.3.11579264
+        run: ./gradlew --no-daemon assembleDebug
 
       - name: Show packaged assets (debug APK)
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eux
           APK="${{ env.APP_DIR }}/app/build/outputs/apk/debug/app-debug.apk"
           unzip -Z1 "$APK" | sed -n '/^assets\/model\//p' || true
 
