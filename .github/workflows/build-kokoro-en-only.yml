@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        profile: [fp32, q8]   # build both variants
+        profile: [fp32, q8]
     env:
       APP_DIR: android/SherpaOnnxTtsEngine
       ASSETS_DIR: android/SherpaOnnxTtsEngine/app/src/main/assets/model
@@ -31,7 +31,6 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          # Be tolerant of SIGPIPE from `yes`
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager --install \
             "platform-tools" \
@@ -39,7 +38,8 @@ jobs:
             "build-tools;34.0.0" \
             "ndk;26.3.11579264" \
             "cmake;3.22.1"
-          echo "Installed NDKs:"; ls -al "$ANDROID_SDK_ROOT/ndk" || true
+          echo "Installed NDKs:"
+          ls -al "$ANDROID_SDK_ROOT/ndk" || true
 
       - name: Prepare English-only assets from official EN APK (voices/tokens/lexicons)
         shell: bash
@@ -47,18 +47,18 @@ jobs:
           set -euxo pipefail
           mkdir -p "$ASSETS_DIR"
 
-          # Download the official English-only TTS Engine APK
+          # Download English-only Kokoro Engine APK
           curl -fL --retry 3 --retry-delay 5 \
             -H "Accept: application/octet-stream" \
             -o en.apk \
             "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
 
-          # Extract ALL assets to a temp dir (APK layout can change)
+          # Extract all assets to a temp dir (layout can vary between APKs)
           TMP_ASSETS="$(mktemp -d)"
           unzip -q en.apk -d "$TMP_ASSETS"
 
           echo "APK assets (first 200 lines):"
-          find "$TMP_ASSETS/assets" -type f | sed 's/^/  /' | head -n 200 || true
+          find "$TMP_ASSETS/assets" -type f | head -n 200 || true
 
           # Copy required files into a flat assets/model/ folder
           find "$TMP_ASSETS" -iname 'tokens.txt' -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
@@ -84,7 +84,7 @@ jobs:
             MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx"
           else
             MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx"
-            # Prefer Q8F16 instead? Use:
+            # Prefer Q8F16 instead? uncomment next line:
             # MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx"
           fi
 
@@ -97,7 +97,9 @@ jobs:
           ls -lah .
 
           # Sanity check
-          test -f model.onnx && test -f tokens.txt && test -f voices.bin
+          test -f model.onnx
+          test -f tokens.txt
+          test -f voices.bin
 
       - name: Make Gradle wrapper executable
         run: chmod +x $APP_DIR/gradlew
@@ -114,4 +116,3 @@ jobs:
         with:
           name: kokoro-en-${{ matrix.profile }}
           path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/release/*.apk
-```0
