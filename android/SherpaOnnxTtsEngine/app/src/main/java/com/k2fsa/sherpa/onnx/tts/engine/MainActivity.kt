@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.k2fsa.sherpa.onnx.tts.engine.ui.theme.SherpaOnnxTtsEngineTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -35,7 +36,7 @@ class MainActivity : ComponentActivity() {
 
     private var mediaPlayer: MediaPlayer? = null
 
-    // see https://developer.android.com/reference/kotlin/android/media/AudioTrack
+    // https://developer.android.com/reference/kotlin/android/media/AudioTrack
     private lateinit var track: AudioTrack
 
     private var stopped: Boolean = false
@@ -45,7 +46,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         Log.i(TAG, "Start to initialize TTS")
-        TtsEngine.createTts(this)  // NOTE: TtsEngine must have a non-null modelDir configured
+        // NOTE: TtsEngine must have a non-null modelDir configured in its init path.
+        TtsEngine.createTts(this)
         Log.i(TAG, "Finish initializing TTS")
 
         Log.i(TAG, "Start to initialize AudioTrack")
@@ -102,19 +104,18 @@ class MainActivity : ComponentActivity() {
                                             rtfText = ""
                                             stopped = false
 
-                                            // Example generation to a wav file; adjust to your TTS API.
+                                            // Synthesize to a wav file. Adjust if your OfflineTts API differs.
                                             CoroutineScope(Dispatchers.Default).launch {
                                                 runCatching {
                                                     val out = File(filesDir, "generated.wav").absolutePath
                                                     TtsEngine.tts?.let { tts ->
-                                                        // Replace with the actual synthesize API you use
                                                         tts.generate(
                                                             text = testText,
                                                             sid = TtsEngine.speakerId,
                                                             speed = TtsEngine.speed,
                                                             outputWavePath = out
                                                         )
-                                                    }
+                                                    } ?: error("TTS engine not initialized")
                                                 }.onSuccess {
                                                     playEnabled = true
                                                     rtfText = "RTF: n/a"
@@ -124,7 +125,9 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                         }
-                                    ) { Text("Start") }
+                                    ) {
+                                        Text("Start")
+                                    }
 
                                     Button(
                                         modifier = Modifier.padding(5.dp),
@@ -137,7 +140,9 @@ class MainActivity : ComponentActivity() {
                                             }
                                             onClickPlay()
                                         }
-                                    ) { Text("Play") }
+                                    ) {
+                                        Text("Play")
+                                    }
 
                                     Button(
                                         modifier = Modifier.padding(5.dp),
@@ -145,7 +150,9 @@ class MainActivity : ComponentActivity() {
                                             onClickStop()
                                             startEnabled = true
                                         }
-                                    ) { Text("Stop") }
+                                    ) {
+                                        Text("Stop")
+                                    }
                                 }
 
                                 if (rtfText.isNotEmpty()) {
@@ -162,14 +169,28 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         stopMediaPlayer()
         if (this::track.isInitialized) {
-            track.release()
+            try {
+                track.release()
+            } catch (e: Throwable) {
+                Log.w(TAG, "AudioTrack release failed", e)
+            }
         }
         super.onDestroy()
     }
 
     private fun stopMediaPlayer() {
-        mediaPlayer?.stop()
-        mediaPlayer?.release()
+        mediaPlayer?.run {
+            try {
+                stop()
+            } catch (_: Throwable) {
+                // ignore; safe-stop
+            }
+            try {
+                release()
+            } catch (_: Throwable) {
+                // ignore
+            }
+        }
         mediaPlayer = null
     }
 
@@ -186,8 +207,12 @@ class MainActivity : ComponentActivity() {
     private fun onClickStop() {
         stopped = true
         if (this::track.isInitialized) {
-            track.pause()
-            track.flush()
+            try {
+                track.pause()
+                track.flush()
+            } catch (e: Throwable) {
+                Log.w(TAG, "AudioTrack pause/flush failed", e)
+            }
         }
         stopMediaPlayer()
     }
@@ -197,10 +222,18 @@ class MainActivity : ComponentActivity() {
     private fun callback(samples: FloatArray): Int {
         return if (!stopped) {
             val copy = samples.copyOf()
-            CoroutineScope(Dispatchers.IO).launch { samplesChannel.send(copy) }
+            CoroutineScope(Dispatchers.IO).launch {
+                samplesChannel.send(copy)
+            }
             1
         } else {
-            if (this::track.isInitialized) track.stop()
+            if (this::track.isInitialized) {
+                try {
+                    track.stop()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "AudioTrack stop failed", e)
+                }
+            }
             Log.i(TAG, " return 0")
             0
         }
@@ -227,7 +260,10 @@ class MainActivity : ComponentActivity() {
             .build()
 
         track = AudioTrack(
-            attr, format, buf, AudioTrack.MODE_STREAM,
+            attr,
+            format,
+            buf,
+            AudioTrack.MODE_STREAM,
             AudioManager.AUDIO_SESSION_ID_GENERATE
         )
         track.play()
