@@ -12,6 +12,7 @@ jobs:
     env:
       APP_DIR: android/SherpaOnnxTtsEngine
       ASSETS_DIR: android/SherpaOnnxTtsEngine/app/src/main/assets/model
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout
@@ -23,49 +24,99 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Android SDK
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install platform, build-tools, NDK, and CMake
+      - name: Install platform, build-tools, NDK, CMake + accept licenses
+        shell: bash
         run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null
           sdkmanager --install \
+            "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
-            "platform-tools" \
             "ndk;26.3.11579264" \
             "cmake;3.22.1"
+          echo "Installed SDK components:"
+          sdkmanager --list | sed -n '1,200p'
+          echo "NDK path:"
+          ls -al "$ANDROID_SDK_ROOT/ndk" || true
 
-      - name: Prepare English-only assets (voices/tokens/lexicons) from official EN APK
+      - name: Prepare English-only assets from official EN APK (voices/tokens/lexicons)
+        shell: bash
         run: |
           set -euxo pipefail
           mkdir -p "$ASSETS_DIR"
-          curl -L "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk" -o en.apk
+          # Use octet-stream header + retries to avoid transient HF issues
+          curl -fL --retry 3 --retry-delay 5 \
+            -H "Accept: application/octet-stream" \
+            -o en.apk \
+            "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
+
+          echo "Listing model assets in APK:"
+          unzip -Z1 en.apk | sed -n '/^assets\/model\//p'
+
           unzip -j en.apk "assets/model/*" -d "$ASSETS_DIR"
+          echo "Assets after extraction:"
           ls -lah "$ASSETS_DIR"
 
+          # Defensive normalization in case filenames differ in future builds
+          cd "$ASSETS_DIR"
+          [ -f tokens.txt ] || mv tokens* tokens.txt 2>/dev/null || true
+          [ -f voices.bin ] || mv voices* voices.bin 2>/dev/null || true
+          cd -
+
       - name: Swap ONNX model (FP32 or Q8)
+        shell: bash
         run: |
           set -euxo pipefail
           cd "$ASSETS_DIR"
           rm -f model.onnx || true
+
           if [ "${{ matrix.profile }}" = "fp32" ]; then
-            curl -L "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx" -o model.onnx
+            MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx"
           else
-            curl -L "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx" -o model.onnx
-            # Prefer q8f16? Replace the line above with:
-            # curl -L "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx" -o model.onnx
+            MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx"
+            # Prefer Q8F16? Use the next line instead:
+            # MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx"
           fi
-          ls -lh model.onnx
-          # Defensive: normalize filenames if upstream renames them
-          [ -f tokens.txt ] || mv tokens* tokens.txt 2>/dev/null || true
-          [ -f voices.bin ] || mv voices* voices.bin 2>/dev/null || true
+
+          curl -fL --retry 3 --retry-delay 5 \
+            -H "Accept: application/octet-stream" \
+            -o model.onnx \
+            "$MODEL_URL"
+
+          echo "Final files in assets/model:"
+          ls -lah .
+
+          # Sanity check: make sure required files exist
+          test -f model.onnx
+          test -f tokens.txt
+          test -f voices.bin
 
       - name: Make Gradle wrapper executable
         run: chmod +x $APP_DIR/gradlew
 
-      - name: Assemble Release
+      - name: Show Gradle + NDK env (diagnostics)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "JAVA_HOME=$JAVA_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls -al $APP_DIR
+
+      - name: Assemble Release (arm64-v8a)
         working-directory: ${{ env.APP_DIR }}
-        run: ./gradlew --no-daemon assembleRelease
+        env:
+          # If your module pins a different ndkVersion, set ANDROID_NDK_HOME accordingly:
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.3.11579264
+          # Optional: make Gradle a bit more verbose for easier debugging
+          ORG_GRADLE_PROJECT_org_gradle_logging_stacktrace: all
+        run: |
+          ./gradlew --no-daemon \
+            -Pandroid.injected.invoked.from.ide=true \
+            assembleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
