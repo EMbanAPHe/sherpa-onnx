@@ -7,6 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         profile: [fp32, q8]
 
@@ -24,12 +25,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: 'gradle'
 
-      - name: Set up Android SDK + packages
+      - name: Set up Android SDK (install packages & accept licenses)
         uses: android-actions/setup-android@v3
         with:
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: true
+          # Install everything we need up-front
           packages: |
             platform-tools
             platforms;android-34
@@ -37,29 +40,41 @@ jobs:
             ndk;26.3.11579264
             cmake;3.22.1
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x "${{ env.APP_DIR }}/gradlew"
+      - name: Show Android tool versions (debug)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --version || true
+          ${ANDROID_SDK_ROOT}/ndk/26.3.11579264/ndk-build --version || true
+          cmake --version || true
 
       - name: Prepare English assets
         shell: bash
         run: |
-          set -eux
+          set -euo pipefail
           mkdir -p "$ASSETS_DIR"
-          curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o en.apk \
+          echo "Downloading donor APK with English assets..."
+          curl -fL --retry 3 --retry-delay 5 \
+            -H "Accept: application/octet-stream" \
+            -o en.apk \
             "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
+
           TMP_ASSETS="$(mktemp -d)"
           unzip -q en.apk -d "$TMP_ASSETS"
+
+          # Copy the assets we need into our project
           find "$TMP_ASSETS" -iname 'tokens.txt' -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
           find "$TMP_ASSETS" -iname 'voices.bin' -exec cp -v {} "$ASSETS_DIR/voices.bin" \; || true
           find "$TMP_ASSETS" -iname 'lexicon-us-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-us-en.txt" \; || true
           find "$TMP_ASSETS" -iname 'lexicon-gb-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-gb-en.txt" \; || true
+
           test -f "$ASSETS_DIR/tokens.txt"
           test -f "$ASSETS_DIR/voices.bin"
 
-      - name: Swap ONNX model (FP32 or Q8)
+      - name: Swap ONNX model (per matrix profile)
         shell: bash
         run: |
-          set -eux
+          set -euo pipefail
           cd "$ASSETS_DIR"
           rm -f model.onnx || true
           if [ "${{ matrix.profile }}" = "fp32" ]; then
@@ -67,23 +82,34 @@ jobs:
           else
             MODEL_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx"
           fi
-          curl -fL --retry 3 --retry-delay 5 -H "Accept: application/octet-stream" -o model.onnx "$MODEL_URL"
+          echo "Downloading model: $MODEL_URL"
+          curl -fL --retry 3 --retry-delay 5 \
+            -H "Accept: application/octet-stream" \
+            -o model.onnx "$MODEL_URL"
           test -f model.onnx
+
+      - name: Make Gradle wrapper executable
+        shell: bash
+        run: chmod +x "${APP_DIR}/gradlew"
 
       - name: Assemble Debug
         working-directory: ${{ env.APP_DIR }}
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/26.3.11579264
-        run: ./gradlew --no-daemon assembleDebug
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.3.11579264
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --stacktrace --warning-mode all assembleDebug
 
-      - name: Show packaged assets (debug APK)
+      - name: Show packaged assets in debug APK
+        if: always()
         shell: bash
         run: |
-          set -eux
+          set -euo pipefail
           APK="${{ env.APP_DIR }}/app/build/outputs/apk/debug/app-debug.apk"
           unzip -Z1 "$APK" | sed -n '/^assets\/model\//p' || true
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kokoro-en-${{ matrix.profile }}-debug
