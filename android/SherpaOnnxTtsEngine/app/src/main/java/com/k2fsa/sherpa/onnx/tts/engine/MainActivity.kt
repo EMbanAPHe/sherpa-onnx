@@ -1,4 +1,3 @@
-l// File: android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/MainActivity.kt
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package com.k2fsa.sherpa.onnx.tts.engine
@@ -31,8 +30,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.io.File
 
-private const val TAG = "sherpa-onnx-tts-engine"
-
 class MainActivity : ComponentActivity() {
 
     // TODO(fangjun): Save settings in ttsViewModel
@@ -59,7 +56,10 @@ class MainActivity : ComponentActivity() {
                 SherpaOnnxTtsEngineTheme {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                         Box(Modifier.fillMaxSize().padding(24.dp)) {
-                            Text("TTS init failed. Please reinstall or check model assets.", color = MaterialTheme.colorScheme.error)
+                            Text(
+                                "TTS init failed. Please reinstall or check model assets.",
+                                color = MaterialTheme.colorScheme.error
+                            )
                         }
                     }
                 }
@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
         Log.i(TAG, "Finish initializing TTS")
 
         Log.i(TAG, "Start to initialize AudioTrack")
-        initAudioTrack()   // now safe: guarded inside the function
+        initAudioTrack()
         Log.i(TAG, "Finish initializing AudioTrack")
 
         val preferenceHelper = PreferenceHelper(this)
@@ -106,22 +106,17 @@ class MainActivity : ComponentActivity() {
                                 var rtfText by remember { mutableStateOf("") }
                                 val scrollState = rememberScrollState(0)
 
-                                // (Your existing UI above this point omitted for brevity)
-                                // --- Buttons row (Start / Play / Stop) ---
-
+                                // Buttons row (Start / Play / Stop)
                                 Row {
                                     Button(
                                         enabled = startEnabled,
                                         modifier = Modifier.padding(5.dp),
                                         onClick = {
-                                            // your generation logic (unchanged)
-                                            // ensure state flags are in a consistent state
+                                            // your generation logic…
                                             playEnabled = false
                                             startEnabled = false
                                             stopped = false
-
-                                            // Example: launch your synthesis job here etc...
-                                            // When done, set playEnabled/startEnabled as you had before.
+                                            // launch synthesis coroutine etc.
                                         }
                                     ) { Text("Start") }
 
@@ -134,7 +129,7 @@ class MainActivity : ComponentActivity() {
                                                 try {
                                                     track.pause()
                                                     track.flush()
-                                                } catch (_: Throwable) { /* ignore */ }
+                                                } catch (_: Throwable) { }
                                             }
                                             onClickPlay()
                                         }
@@ -166,9 +161,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopMediaPlayer() {
-        try {
-            mediaPlayer?.stop()
-        } catch (_: Throwable) { }
+        try { mediaPlayer?.stop() } catch (_: Throwable) { }
         mediaPlayer?.release()
         mediaPlayer = null
     }
@@ -213,14 +206,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun initAudioTrack() {
-        // Avoid NPE: tts can be null if init failed; use a safe fallback sample rate (24k for Kokoro)
         val sampleRate = TtsEngine.tts?.sampleRate() ?: 24_000
         var bufLength = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_FLOAT
         )
-        if (bufLength <= 0) bufLength = sampleRate // crude but safe fallback
+        if (bufLength <= 0) bufLength = sampleRate
         Log.i(TAG, "sampleRate: $sampleRate, buffLength: $bufLength")
 
         val attr = AudioAttributes.Builder()
@@ -242,10 +234,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Minimal helper so the screen has something to speak if no language-specific sample is supplied. */
+/** Fallback sample text if none is provided. */
 private fun getSampleText(lang: String): String =
     when (lang.lowercase()) {
         "eng", "en", "en-us", "en-gb" -> "How are you doing today? This is a text to speech engine."
         else -> "Hello. This is a text to speech engine demo."
     }
-```0
