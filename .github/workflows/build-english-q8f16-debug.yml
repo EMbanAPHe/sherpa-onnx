@@ -54,7 +54,7 @@ jobs:
           unzip -q en.apk -d "$TMP_ASSETS"
 
           echo "Listing asset files found in APK:"
-          unzip -Z1 en.apk | sed -n '/^assets\//p' | head -200
+          ( unzip -Z1 en.apk | sed -n '/^assets\//p' | head -200 ) || true
 
           # Copy required assets no matter which subfolder they are in
           find "$TMP_ASSETS" -path '*/assets/*' -name 'tokens.txt' -print -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
@@ -113,3 +113,4 @@ jobs:
         with:
           name: sherpa-onnx-tts-engine-english-q8f16-debug
           path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk
+```0
