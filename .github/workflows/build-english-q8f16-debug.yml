@@ -21,17 +21,23 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK (install packages & accept licenses)
+      # We avoid 'packages:' to sidestep the flake you hit inside the action.
+      - name: Set up Android SDK (tool only)
         uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
-          log-accepted-android-sdk-licenses: true
-          packages: |
-            platform-tools
-            platforms;android-34
-            build-tools;34.0.0
-            ndk;26.3.11579264
-            cmake;3.22.1
+
+      - name: Install SDK Platform, Build-tools, NDK, CMake (and accept licenses)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;26.3.11579264" \
+            "cmake;3.22.1"
+          echo "NDK installed at: $ANDROID_SDK_ROOT/ndk"
+          ls -al "$ANDROID_SDK_ROOT/ndk" || true
 
       - name: Extract EN-only assets from official APK (voices/tokens/lexicons)
         shell: bash
@@ -42,16 +48,17 @@ jobs:
             -H "Accept: application/octet-stream" \
             -o en.apk \
             "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
-          TMP_ASSETS="$(mktemp -d)"
-          unzip -q en.apk -d "$TMP_ASSETS"
-          # Copy the assets we need into our project
-          find "$TMP_ASSETS" -iname 'tokens.txt' -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
-          find "$TMP_ASSETS" -iname 'voices.bin' -exec cp -v {} "$ASSETS_DIR/voices.bin" \; || true
-          find "$TMP_ASSETS" -iname 'lexicon-us-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-us-en.txt" \; || true
-          find "$TMP_ASSETS" -iname 'lexicon-gb-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-gb-en.txt" \; || true
-          # Sanity: required files
-          test -f "$ASSETS_DIR/tokens.txt"
-          test -f "$ASSETS_DIR/voices.bin"
+          # Extract only the model assets from the APK
+          unzip -j en.apk "assets/model/*" -d "$ASSETS_DIR"
+          echo "Assets after extraction:"; ls -lah "$ASSETS_DIR"
+          # Defensive normalization + keep only English lexicons
+          cd "$ASSETS_DIR"
+          [ -f tokens.txt ] || mv tokens* tokens.txt 2>/dev/null || true
+          [ -f voices.bin ] || mv voices* voices.bin 2>/dev/null || true
+          find . -maxdepth 1 -type f -name 'lexicon-*.txt' \
+            ! -name 'lexicon-us-en.txt' \
+            ! -name 'lexicon-gb-en.txt' -delete
+          cd -
 
       - name: Swap ONNX to Kokoro v1.0 Q8F16 (best quality @ speed)
         shell: bash
@@ -63,8 +70,8 @@ jobs:
             -H "Accept: application/octet-stream" \
             -o model.onnx \
             "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx"
-          ls -lah .
-          # Sanity
+          echo "Final files in assets/model:"; ls -lah .
+          # Fail fast if anything went missing
           test -f model.onnx && test -f tokens.txt && test -f voices.bin
 
       - name: Make Gradle wrapper executable
@@ -74,9 +81,7 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         env:
           ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.3.11579264
-        run: |
-          set -euo pipefail
-          ./gradlew --no-daemon --stacktrace --warning-mode all assembleDebug
+        run: ./gradlew --no-daemon --stacktrace --warning-mode all assembleDebug
 
       - name: Show packaged assets in debug APK
         if: always()
