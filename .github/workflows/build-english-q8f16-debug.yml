@@ -21,7 +21,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # We avoid 'packages:' to sidestep the flake you hit inside the action.
+      # Use the action only to provision the SDK tool; install packages ourselves for reliability.
       - name: Set up Android SDK (tool only)
         uses: android-actions/setup-android@v3
 
