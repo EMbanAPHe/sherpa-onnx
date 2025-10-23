@@ -113,4 +113,3 @@ jobs:
         with:
           name: sherpa-onnx-tts-engine-english-q8f16-debug
           path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk
-```0
