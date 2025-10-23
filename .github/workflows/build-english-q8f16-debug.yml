@@ -21,7 +21,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Provision the CLI; we install packages ourselves (more reliable).
+      # Provision the CLI; install packages ourselves (more reliable).
       - name: Set up Android SDK (tool only)
         uses: android-actions/setup-android@v3
 
@@ -39,44 +39,44 @@ jobs:
           echo "NDK installed at: $ANDROID_SDK_ROOT/ndk"
           ls -al "$ANDROID_SDK_ROOT/ndk" || true
 
-- name: Extract EN-only assets from official APK (voices/tokens/lexicons)
-  shell: bash
-  run: |
-    set -euo pipefail
-    mkdir -p "$ASSETS_DIR"
-    curl -fL --retry 3 --retry-delay 5 \
-      -H "Accept: application/octet-stream" \
-      -o en.apk \
-      "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
+      - name: Extract EN-only assets from official APK (voices/tokens/lexicons)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ASSETS_DIR"
+          curl -fL --retry 3 --retry-delay 5 \
+            -H "Accept: application/octet-stream" \
+            -o en.apk \
+            "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.14/sherpa-onnx-1.12.14-arm64-v8a-en-tts-engine-kokoro-en-v0_19.apk"
 
-    # 1) Unzip whole APK to a temp dir (quietly), then 2) pick out the files we need.
-    TMP_ASSETS="$(mktemp -d)"
-    unzip -q en.apk -d "$TMP_ASSETS"
+          # 1) Unzip whole APK to a temp dir (quietly), then 2) pick out the files we need.
+          TMP_ASSETS="$(mktemp -d)"
+          unzip -q en.apk -d "$TMP_ASSETS"
 
-    echo "Listing asset files found in APK:"
-    unzip -Z1 en.apk | sed -n '/^assets\//p' | head -200
+          echo "Listing asset files found in APK:"
+          unzip -Z1 en.apk | sed -n '/^assets\//p' | head -200
 
-    # Copy required assets no matter which subfolder they are in
-    find "$TMP_ASSETS" -path '*/assets/*' -name 'tokens.txt' -print -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
-    find "$TMP_ASSETS" -path '*/assets/*' -name 'voices.bin' -print -exec cp -v {} "$ASSETS_DIR/voices.bin" \; || true
+          # Copy required assets no matter which subfolder they are in
+          find "$TMP_ASSETS" -path '*/assets/*' -name 'tokens.txt' -print -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
+          find "$TMP_ASSETS" -path '*/assets/*' -name 'voices.bin' -print -exec cp -v {} "$ASSETS_DIR/voices.bin" \; || true
 
-    # Copy English lexicons if present; ignore others
-    find "$TMP_ASSETS" -path '*/assets/*' -name 'lexicon-us-en.txt' -print -exec cp -v {} "$ASSETS_DIR/lexicon-us-en.txt" \; || true
-    find "$TMP_ASSETS" -path '*/assets/*' -name 'lexicon-gb-en.txt' -print -exec cp -v {} "$ASSETS_DIR/lexicon-gb-en.txt" \; || true
+          # Copy English lexicons if present; ignore others
+          find "$TMP_ASSETS" -path '*/assets/*' -name 'lexicon-us-en.txt' -print -exec cp -v {} "$ASSETS_DIR/lexicon-us-en.txt" \; || true
+          find "$TMP_ASSETS" -path '*/assets/*' -name 'lexicon-gb-en.txt' -print -exec cp -v {} "$ASSETS_DIR/lexicon-gb-en.txt" \; || true
 
-    echo "Assets after copy:"
-    ls -lah "$ASSETS_DIR"
+          echo "Assets after copy:"
+          ls -lah "$ASSETS_DIR"
 
-    # Normalize names and enforce presence
-    cd "$ASSETS_DIR"
-    [ -f tokens.txt ] || { echo "ERROR: tokens.txt not found"; exit 2; }
-    [ -f voices.bin ] || { echo "ERROR: voices.bin not found"; exit 3; }
+          # Normalize names and enforce presence
+          cd "$ASSETS_DIR"
+          [ -f tokens.txt ] || { echo "ERROR: tokens.txt not found"; exit 2; }
+          [ -f voices.bin ] || { echo "ERROR: voices.bin not found"; exit 3; }
 
-    # Defensive prune: keep English lexicons only if others ever appear
-    find . -maxdepth 1 -type f -name 'lexicon-*.txt' \
-      ! -name 'lexicon-us-en.txt' \
-      ! -name 'lexicon-gb-en.txt' -delete
-    cd -
+          # Defensive prune: keep English lexicons only if others ever appear
+          find . -maxdepth 1 -type f -name 'lexicon-*.txt' \
+            ! -name 'lexicon-us-en.txt' \
+            ! -name 'lexicon-gb-en.txt' -delete
+          cd -
 
       - name: Swap ONNX to Kokoro v1.0 Q8F16 (best quality @ speed)
         shell: bash
