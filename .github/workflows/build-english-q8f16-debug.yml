@@ -21,7 +21,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Provision the CLI; install packages ourselves (more reliable).
+      # Provision the CLI; we'll install packages ourselves for reliability.
       - name: Set up Android SDK (tool only)
         uses: android-actions/setup-android@v3
 
@@ -34,7 +34,7 @@ jobs:
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
-            "ndk;26.3.11579264" \
+            "ndk;26.1.10909125" \
             "cmake;3.22.1"
           echo "NDK installed at: $ANDROID_SDK_ROOT/ndk"
           ls -al "$ANDROID_SDK_ROOT/ndk" || true
@@ -53,12 +53,14 @@ jobs:
           TMP_ASSETS="$(mktemp -d)"
           unzip -q en.apk -d "$TMP_ASSETS"
 
-          echo "Listing asset files found in APK:"
-          ( unzip -Z1 en.apk | sed -n '/^assets\//p' | head -200 ) || true
+          echo "Listing asset files found in APK (non-fatal):"
+          set +o pipefail
+          unzip -Z1 en.apk | sed -n '/^assets\//p' | head -200 || true
+          set -o pipefail
 
           # Copy required assets no matter which subfolder they are in
-          find "$TMP_ASSETS" -path '*/assets/*' -name 'tokens.txt' -print -exec cp -v {} "$ASSETS_DIR/tokens.txt" \; || true
-          find "$TMP_ASSETS" -path '*/assets/*' -name 'voices.bin' -print -exec cp -v {} "$ASSETS_DIR/voices.bin" \; || true
+          find "$TMP_ASSETS" -path '*/assets/*' -name 'tokens.txt'  -print -exec cp -v {} "$ASSETS_DIR/tokens.txt" \;  || true
+          find "$TMP_ASSETS" -path '*/assets/*' -name 'voices.bin'  -print -exec cp -v {} "$ASSETS_DIR/voices.bin" \;  || true
 
           # Copy English lexicons if present; ignore others
           find "$TMP_ASSETS" -path '*/assets/*' -name 'lexicon-us-en.txt' -print -exec cp -v {} "$ASSETS_DIR/lexicon-us-en.txt" \; || true
@@ -97,8 +99,10 @@ jobs:
       - name: Assemble Debug (arm64-v8a)
         working-directory: ${{ env.APP_DIR }}
         env:
-          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.3.11579264
-        run: ./gradlew --no-daemon --stacktrace --warning-mode all assembleDebug
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.1.10909125
+          ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/26.1.10909125
+          ANDROID_NDK: /usr/local/lib/android/sdk/ndk/26.1.10909125
+        run: ./gradlew --no-daemon --stacktrace --info --console=plain assembleDebug
 
       - name: Show packaged assets in debug APK
         if: always()
@@ -113,3 +117,13 @@ jobs:
         with:
           name: sherpa-onnx-tts-engine-english-q8f16-debug
           path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Dump C/C++ build logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "==== .cxx logs (if any) ===="
+          find "${{ env.APP_DIR }}/app/.cxx" -type f \( -name "*.log" -o -name "error*.txt" -o -name "build*.txt" \) -maxdepth 4 -print -exec tail -n +1 -v {} \; || true
+          echo "==== externalNativeBuild outputs (if any) ===="
+          find "${{ env.APP_DIR }}/app/build" -type f -path "*/external_native_build/*" -name "*.log" -print -exec tail -n +1 -v {} \; || true
