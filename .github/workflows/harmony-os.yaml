@@ -1,12 +1,5 @@
 name: harmony-os
 
-on:
-  push:
-    branches:
-      - master
-      - ohos
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
   workflow_dispatch:
 
