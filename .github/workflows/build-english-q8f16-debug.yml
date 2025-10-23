@@ -49,6 +49,7 @@ jobs:
           find "$TMP_ASSETS" -iname 'voices.bin' -exec cp -v {} "$ASSETS_DIR/voices.bin" \; || true
           find "$TMP_ASSETS" -iname 'lexicon-us-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-us-en.txt" \; || true
           find "$TMP_ASSETS" -iname 'lexicon-gb-en.txt' -exec cp -v {} "$ASSETS_DIR/lexicon-gb-en.txt" \; || true
+          # Sanity: required files
           test -f "$ASSETS_DIR/tokens.txt"
           test -f "$ASSETS_DIR/voices.bin"
 
@@ -62,12 +63,12 @@ jobs:
             -H "Accept: application/octet-stream" \
             -o model.onnx \
             "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_q8f16.onnx"
-          # Sanity
           ls -lah .
+          # Sanity
           test -f model.onnx && test -f tokens.txt && test -f voices.bin
 
       - name: Make Gradle wrapper executable
-        run: chmod +x "${APP_DIR}/gradlew"
+        run: chmod +x $APP_DIR/gradlew
 
       - name: Assemble Debug (arm64-v8a)
         working-directory: ${{ env.APP_DIR }}
