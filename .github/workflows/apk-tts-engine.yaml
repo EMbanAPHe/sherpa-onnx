@@ -1,24 +1,22 @@
-name: apk-tts-engine
+name: Build Sherpa Onnx TTS Engine (fork)
 
 on:
+  workflow_dispatch:    # manual run only
   push:
-    branches:
-      - master
-      - apk
-
-  workflow_dispatch:
+    branches: [ master ]  # optional; remove if you want manual-only
 
 concurrency:
   group: apk-tts-engine-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   apk_tts_engine:
-    runs-on: ${{ matrix.os }}
-    name: apk for tts engine ${{ matrix.index }}/${{ matrix.total }}
+    runs-on: ubuntu-latest
+    name: Build TTS Engine APK
+
     strategy:
       fail-fast: false
       matrix:
@@ -31,19 +29,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update version
-        shell: bash
-        run: |
-          ./new-release.sh
-          git diff .
+      # If you don't need upstream version bumping, keep this removed.
+      # - name: Update version
+      #   run: ./new-release.sh
 
-      # https://github.com/actions/setup-java
       - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin' # See 'Supported distributions' for available options
-          java-version: '21'
+          distribution: temurin
+          java-version: '17'     # use 21 if you know it works for you
 
-      - name: ccache
+      - name: Enable ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ matrix.os }}-android
@@ -52,26 +47,14 @@ jobs:
         shell: bash
         run: |
           echo "ANDROID_NDK_LATEST_HOME: ${ANDROID_NDK_LATEST_HOME}"
-          ls -lh ${ANDROID_NDK_LATEST_HOME}
+          ls -lh "${ANDROID_NDK_LATEST_HOME}"
 
       - name: Install Python dependencies
+        run: python3 -m pip install --upgrade pip jinja2 iso639-lang
+
+      - name: Detect latest build-tools
         shell: bash
         run: |
-          python3 -m pip install --upgrade pip jinja2 iso639-lang
-
-      - name: Setup build tool version variable
-        shell: bash
-        run: |
-          echo "---"
-          ls -lh /usr/local/lib/android/
-          echo "---"
-
-          ls -lh /usr/local/lib/android/sdk
-          echo "---"
-
-          ls -lh /usr/local/lib/android/sdk/build-tools
-          echo "---"
-
           BUILD_TOOL_VERSION=$(ls /usr/local/lib/android/sdk/build-tools/ | tail -n 1)
           echo "BUILD_TOOL_VERSION=$BUILD_TOOL_VERSION" >> $GITHUB_ENV
           echo "Last build tool version is: $BUILD_TOOL_VERSION"
@@ -80,34 +63,30 @@ jobs:
         shell: bash
         run: |
           cd scripts/apk
-
           total=${{ matrix.total }}
           index=${{ matrix.index }}
-
-          ./generate-tts-apk-script.py --total $total --index $index
-
+          ./generate-tts-apk-script.py --total "$total" --index "$index"
           chmod +x build-apk-tts-engine.sh
           mv -v ./build-apk-tts-engine.sh ../..
 
-      - name: build APK for TTS engine
+      - name: Build APK for TTS engine
         shell: bash
         run: |
           export CMAKE_CXX_COMPILER_LAUNCHER=ccache
           export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           cmake --version
-
-          export ANDROID_NDK=$ANDROID_NDK_LATEST_HOME
+          export ANDROID_NDK="$ANDROID_NDK_LATEST_HOME"
           ./build-apk-tts-engine.sh
 
-      - name: Display APK for TTS engine
-        shell: bash
+      - name: Show built files
         run: |
           ls -lh ./apks/
           du -h -d1 .
 
-      # https://github.com/marketplace/actions/sign-android-release
+      # ---- OPTIONAL SIGNING (guarded) ----
       - uses: r0adkll/sign-android-release@v1
-        name: Sign app APK
+        name: Sign app APK (if secrets provided)
+        if: ${{ secrets.ANDROID_SIGNING_KEY != '' && secrets.ANDROID_SIGNING_KEY_ALIAS != '' && secrets.ANDROID_SIGNING_KEY_STORE_PASSWORD != '' }}
         with:
           releaseDirectory: ./apks
           signingKeyBase64: ${{ secrets.ANDROID_SIGNING_KEY }}
@@ -116,71 +95,29 @@ jobs:
         env:
           BUILD_TOOLS_VERSION: ${{ env.BUILD_TOOL_VERSION }}
 
-      - name: Display APK for TTS engine after signing
-        shell: bash
-        run: |
-          ls -lh ./apks/
-          du -h -d1 .
-
-      - name: Rename APK for TTS engine after signing
+      - name: Normalize APK filenames after signing
+        if: ${{ secrets.ANDROID_SIGNING_KEY != '' && secrets.ANDROID_SIGNING_KEY_ALIAS != '' && secrets.ANDROID_SIGNING_KEY_STORE_PASSWORD != '' }}
         shell: bash
         run: |
           cd apks
-          rm -fv signingKey.jks
-          rm -fv *.apk.idsig
-          rm -fv *-aligned.apk
-
-          all_apks=$(ls -1 *-signed.apk)
-          echo "----"
-          echo $all_apks
-          echo "----"
-          for apk in ${all_apks[@]}; do
-            n=$(echo $apk | sed -e s/-signed//)
-            mv -v $apk $n
+          rm -fv signingKey.jks *.apk.idsig *-aligned.apk || true
+          shopt -s nullglob
+          for apk in *-signed.apk; do
+            n="${apk/-signed/}"
+            mv -v "$apk" "$n"
           done
 
-          cd ..
-
-          ls -lh ./apks/
-          du -h -d1 .
-
+      # ---- ALWAYS upload the apks we have ----
       - uses: actions/upload-artifact@v4
-        if: false
         with:
-          name: tts-engine-apk-${{ matrix.index }}
+          name: SherpaOnnxTtsEngine
           path: ./apks/*.apk
 
-      - name: Publish to huggingface
-        if: true
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 20
-          timeout_seconds: 200
-          shell: bash
-          command: |
-            git config --global user.email "csukuangfj@gmail.com"
-            git config --global user.name "Fangjun Kuang"
-
-            rm -rf huggingface
-            export GIT_LFS_SKIP_SMUDGE=1
-            export GIT_CLONE_PROTECTION_ACTIVE=false
-
-            SHERPA_ONNX_VERSION=$(grep "SHERPA_ONNX_VERSION" ./CMakeLists.txt  | cut -d " " -f 2  | cut -d '"' -f 2)
-            echo "SHERPA_ONNX_VERSION $SHERPA_ONNX_VERSION"
-
-            git clone https://csukuangfj:$HF_TOKEN@huggingface.co/csukuangfj/sherpa-onnx-apk huggingface
-            cd huggingface
-            git fetch
-            git pull
-            git merge -m "merge remote" --ff origin main
-
-            d=tts-engine-new/$SHERPA_ONNX_VERSION
-            mkdir -p $d
-            cp -v ../apks/*.apk $d/
-            git status
-            git lfs track "*.apk"
-            git add .
-            git commit -m "add more tts engine apks"
-            git push https://csukuangfj:$HF_TOKEN@huggingface.co/csukuangfj/sherpa-onnx-apk main
+      # ---- DISABLED: publish to huggingface (upstream only) ----
+      # - name: Publish to huggingface
+      #   if: ${{ secrets.HF_TOKEN != '' }}
+      #   env:
+      #     HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      #   run: |
+      #     # your fork won’t need this
+      #     echo "Publishing disabled for forks."
