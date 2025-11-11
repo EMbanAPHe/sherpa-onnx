@@ -79,10 +79,9 @@ jobs:
           ls -lh ./apks/
           du -h -d1 .
 
-      # ---- OPTIONAL SIGNING (guarded) ----
+      # ---- OPTIONAL SIGNING ----
       - uses: r0adkll/sign-android-release@v1
         name: Sign app APK (if secrets provided)
-        if: ${{ secrets.ANDROID_SIGNING_KEY != '' && secrets.ANDROID_SIGNING_KEY_ALIAS != '' && secrets.ANDROID_SIGNING_KEY_STORE_PASSWORD != '' }}
         with:
           releaseDirectory: ./apks
           signingKeyBase64: ${{ secrets.ANDROID_SIGNING_KEY }}
@@ -92,7 +91,6 @@ jobs:
           BUILD_TOOLS_VERSION: ${{ env.BUILD_TOOL_VERSION }}
 
       - name: Normalize APK filenames after signing
-        if: ${{ secrets.ANDROID_SIGNING_KEY != '' && secrets.ANDROID_SIGNING_KEY_ALIAS != '' && secrets.ANDROID_SIGNING_KEY_STORE_PASSWORD != '' }}
         shell: bash
         run: |
           cd apks
@@ -102,6 +100,7 @@ jobs:
             n="${apk/-signed/}"
             mv -v "$apk" "$n"
           done
+
 
       # ---- ALWAYS upload the apks we have ----
       - uses: actions/upload-artifact@v4
