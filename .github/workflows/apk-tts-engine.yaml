@@ -42,7 +42,7 @@ jobs:
       - name: Add Kokoro (small INT8) to APK assets
         shell: bash
         run: |
-          ASSETS=android/SherpaOnnxTtsEngine/app/src/main/assets/models/kokoro-en-small-int8
+          ASSETS=android/SherpaOnnxTtsEngine/app/src/main/assets/models/Kokoro-82M-v1.0-ONNX
           mkdir -p "$ASSETS"
           wget -O "$ASSETS/model.onnx"  https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/tree/main/onnx/model_quantized.onnx
           wget -O "$ASSETS/tokens.txt"  https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/tree/maintokens.txt
