@@ -3,6 +3,7 @@ name: apk-tts-engine
 on:
   push:
     branches:
+      - master
       - apk
 
   workflow_dispatch:
@@ -16,7 +17,6 @@ permissions:
 
 jobs:
   apk_tts_engine:
-    if: github.repository_owner == 'csukuangfj' || github.repository_owner == 'k2-fsa'
     runs-on: ${{ matrix.os }}
     name: apk for tts engine ${{ matrix.index }}/${{ matrix.total }}
     strategy:
