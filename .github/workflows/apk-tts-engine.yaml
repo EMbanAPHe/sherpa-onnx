@@ -39,15 +39,22 @@ jobs:
       # ==========================================================
       # Download Kokoro small INT8 model only
       # ==========================================================
-      - name: Add Kokoro (small INT8) to APK assets
+      - name: Add Kokoro (v0.19 full model) to APK assets
         shell: bash
         run: |
-          ASSETS=android/SherpaOnnxTtsEngine/app/src/main/assets/models/Kokoro-82M-v1.0-ONNX
+          ASSETS=android/SherpaOnnxTtsEngine/app/src/main/assets/models
           mkdir -p "$ASSETS"
-          wget -O "$ASSETS/model.onnx"  https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/tree/main/onnx/model_quantized.onnx
-          wget -O "$ASSETS/tokens.txt"  https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/tree/maintokens.txt
-          wget -O "$ASSETS/config.json" https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/tree/mainconfig.json
+          cd "$ASSETS"
 
+          echo "Downloading Kokoro v0.19 model package..."
+          wget -q --show-progress https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
+
+          echo "Extracting model..."
+          tar -xjf kokoro-en-v0_19.tar.bz2
+          rm kokoro-en-v0_19.tar.bz2
+
+          echo "Contents:"
+          ls -lh kokoro-en-v0_19
 
       # ==========================================================
       # Build debug APK (engine + Kokoro model)
