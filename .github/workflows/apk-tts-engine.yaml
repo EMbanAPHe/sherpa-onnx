@@ -29,14 +29,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # If you don't need upstream version bumping, keep this removed.
-      # - name: Update version
-      #   run: ./new-release.sh
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'     # use 21 if you know it works for you
+          java-version: '17'
 
       - name: Enable ccache
         uses: hendrikmuhs/ccache-action@v1.2
@@ -119,5 +115,4 @@ jobs:
       #   env:
       #     HF_TOKEN: ${{ secrets.HF_TOKEN }}
       #   run: |
-      #     # your fork won’t need this
       #     echo "Publishing disabled for forks."
