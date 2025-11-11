@@ -44,9 +44,10 @@ jobs:
         run: |
           ASSETS=android/SherpaOnnxTtsEngine/app/src/main/assets/models/kokoro-en-small-int8
           mkdir -p "$ASSETS"
-          wget -O "$ASSETS/model.onnx"  https://huggingface.co/csukuangfj/sherpa-onnx-tts-kokoro-en-small-int8/resolve/main/model.onnx
-          wget -O "$ASSETS/tokens.txt"  https://huggingface.co/csukuangfj/sherpa-onnx-tts-kokoro-en-small-int8/resolve/main/tokens.txt
-          wget -O "$ASSETS/config.json" https://huggingface.co/csukuangfj/sherpa-onnx-tts-kokoro-en-small-int8/resolve/main/config.json
+          wget -O "$ASSETS/model.onnx"  https://k2-fsa.github.io/sherpa/onnx/models/tts/kokoro-en-small-int8/model.onnx
+          wget -O "$ASSETS/tokens.txt"  https://k2-fsa.github.io/sherpa/onnx/models/tts/kokoro-en-small-int8/tokens.txt
+          wget -O "$ASSETS/config.json" https://k2-fsa.github.io/sherpa/onnx/models/tts/kokoro-en-small-int8/config.json
+
 
       # ==========================================================
       # Build debug APK (engine + Kokoro model)
