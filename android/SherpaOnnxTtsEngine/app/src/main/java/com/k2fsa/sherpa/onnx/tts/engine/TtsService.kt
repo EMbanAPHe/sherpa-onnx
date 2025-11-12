@@ -54,6 +54,22 @@ Failed to get default language from engine com.k2fsa.sherpa.chapter5
 */
 
 class TtsService : TextToSpeechService() {
+    // --- Performance patch: reduce GC and sentence gap ---
+    private val tmpPcm16 = ThreadLocal.withInitial { ByteArray(256 * 1024) } // 256 KB scratch buffer
+
+    private fun floatToPcm16InPlace(src: FloatArray, dst: ByteArray, frames: Int) {
+        var j = 0
+        var i = 0
+        val n = frames
+        while (i < n) {
+            val s = (src[i] * 32767.0f).toInt().coerceIn(-32768, 32767)
+            dst[j] = (s and 0xff).toByte()
+            dst[j + 1] = ((s ushr 8) and 0xff).toByte()
+            i += 1
+            j += 2
+        }
+    }
+// --- End patch ---
     override fun onCreate() {
         Log.i(TAG, "onCreate tts service")
         super.onCreate()
@@ -129,19 +145,18 @@ class TtsService : TextToSpeechService() {
             return
         }
 
-        val ttsCallback: (FloatArray) -> Int = fun(floatSamples): Int {
-            // convert FloatArray to ByteArray
-            val samples = floatArrayToByteArray(floatSamples)
-            val maxBufferSize: Int = callback.maxBufferSize
-            var offset = 0
-            while (offset < samples.size) {
-                val bytesToWrite = Math.min(maxBufferSize, samples.size - offset)
-                callback.audioAvailable(samples, offset, bytesToWrite)
-                offset += bytesToWrite
-            }
+        val ttsCallback: (FloatArray) -> Int = fun(chunk: FloatArray): Int {
+            val scratch = tmpPcm16.get()
+            val maxBytes = callback.maxBufferSize.coerceAtLeast(4096)
 
-            // 1 means to continue
-            // 0 means to stop
+            var srcOff = 0
+            val totalFrames = chunk.size
+            while (srcOff < totalFrames) {
+                val framesThis = ((maxBytes / 2).coerceAtMost(scratch.size / 2)).coerceAtMost(totalFrames - srcOff)
+                floatToPcm16InPlace(chunk.copyOfRange(srcOff, srcOff + framesThis), scratch, framesThis)
+                callback.audioAvailable(scratch, 0, framesThis * 2)
+                srcOff += framesThis
+            }
             return 1
         }
 
