@@ -59,7 +59,7 @@ jobs:
           FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsEngine.kt"
           echo "Patching $FILE"
           perl -0777 -pi -e '
-            s/(init\s*\{\s*\n)/$1    // Auto-injected for Kokoro\n    modelDir = "kokoro-en-v0_19"\n    modelName = "model.onnx"\n    voices = "voices.bin"\n    dataDir = "kokoro-en-v0_19\\/espeak-ng-data"\n\n/;
+            s/(init\s*\{\s*\n)/$1    // Auto-injected for Kokoro\n    modelDir = "kokoro-en-v0_19"\n    modelName = "model.onnx"\n    voices = "voices.bin"\n    dataDir = "kokoro-en-v0_19/espeak-ng-data"\n\n/;
           ' "$FILE"
           echo "Patched defaults in TtsEngine.kt"
 
