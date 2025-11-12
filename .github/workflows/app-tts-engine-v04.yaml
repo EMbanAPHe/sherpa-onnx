@@ -38,6 +38,13 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}
 
+      - name: Build JNI libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd android
+          ./build-android-arm64-v8a.sh
+
       # ==========================================================
       # Add Kokoro model directly under assets/ (not assets/models/)
       # ==========================================================
@@ -75,7 +82,8 @@ jobs:
       # ==========================================================
       # Build and upload
       # ==========================================================
-      - name: Build APK (Kokoro bundled)
+      
+      - name: Build TTS Engine APK
         working-directory: android/SherpaOnnxTtsEngine
         run: ./gradlew assembleDebug
 
