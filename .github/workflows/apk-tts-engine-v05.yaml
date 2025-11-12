@@ -121,19 +121,71 @@ jobs:
       cp -v "jni/arm64-v8a/libsherpa-onnx-jni.so"               "$GITHUB_WORKSPACE/android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/"
     fi
 
+# --- Ensure JNI libs are packaged for arm64-v8a ---
+- name: Prepare jniLibs folder
+  shell: bash
+  run: |
+    set -euxo pipefail
+    mkdir -p android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a
+
+- name: Try to resolve JNI via Gradle (first, normal path)
+  working-directory: android/SherpaOnnxTtsEngine
+  run: |
+    ./gradlew --no-daemon :app:assembleDebug || true
+
+- name: Check if APK has JNI (lib/) already
+  shell: bash
+  run: |
+    set -euxo pipefail
+    APK="android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk"
+    if [ -f "$APK" ]; then
+      echo "Listing APK native libs (if any):"
+      unzip -l "$APK" | awk '{print $4}' | grep -E '^lib/' || true
+    else
+      echo "APK not present yet; will fetch JNI and rebuild."
+    fi
+
+- name: If missing, fetch AAR and extract libsherpa-onnx-jni.so
+  shell: bash
+  run: |
+    set -euxo pipefail
+    APK="android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk"
+    NEED_FETCH=1
+    if [ -f "$APK" ]; then
+      if unzip -l "$APK" | awk '{print $4}' | grep -q 'lib/arm64-v8a/libsherpa-onnx-jni.so'; then
+        echo "APK already has libsherpa-onnx-jni.so; skipping fetch."
+        NEED_FETCH=0
+      fi
+    fi
+
+    if [ "$NEED_FETCH" -eq 1 ]; then
+      echo "Fetching sherpa-onnx-android AAR and extracting JNI..."
+      cd /tmp
+      VER=1.12.14
+      AAR_URL="https://repo1.maven.org/maven2/io/github/k2-fsa/sherpa-onnx-android/${VER}/sherpa-onnx-android-${VER}.aar"
+      wget -q --show-progress "$AAR_URL"
+      unzip -q "sherpa-onnx-android-${VER}.aar" "jni/arm64-v8a/libsherpa-onnx-jni.so"
+      cp -v "jni/arm64-v8a/libsherpa-onnx-jni.so"               "$GITHUB_WORKSPACE/android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/"
+    fi
+
 - name: Build APK (Kokoro + JNI bundled)
   working-directory: android/SherpaOnnxTtsEngine
-  run: ./gradlew --no-daemon clean assembleDebug
+  run: |
+    ./gradlew --no-daemon clean assembleDebug
 
 - name: Verify native libs in APK
   shell: bash
   run: |
     set -euxo pipefail
-    APK=android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk
+    APK="android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/app-debug.apk"
     unzip -l "$APK" | awk '{print $4}' | grep -E '^lib/' || (echo "No JNI libs packaged!" && exit 1)
     unzip -l "$APK" | awk '{print $4}' | grep 'lib/arm64-v8a/libsherpa-onnx-jni.so' || (echo "libsherpa-onnx-jni.so missing!" && exit 1)
 
 - name: Upload APK
+  uses: actions/upload-artifact@v4
+  with:
+    name: SherpaOnnxTtsEngine
+    path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/*.apk
   uses: actions/upload-artifact@v4
   with:
     name: SherpaOnnxTtsEngine
