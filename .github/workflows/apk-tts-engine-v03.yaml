@@ -1,0 +1,74 @@
+name: apk-tts-engine
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-tts-engine:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          ndk: 26.1.10909125
+          build-tools: 34.0.0
+
+      - name: Install required tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip perl
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}
+
+      # Put Kokoro directly under assets/ so Kotlin can find it
+      - name: Add Kokoro (v0.19) model to assets
+        shell: bash
+        run: |
+          cd android/SherpaOnnxTtsEngine/app/src/main/assets
+          wget -q --show-progress \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
+          tar -xjf kokoro-en-v0_19.tar.bz2
+          rm kokoro-en-v0_19.tar.bz2
+          test -f kokoro-en-v0_19/model.onnx
+          test -f kokoro-en-v0_19/voices.bin
+          test -d kokoro-en-v0_19/espeak-ng-data
+          echo "Extracted to $(pwd)/kokoro-en-v0_19"
+
+      # Inject defaults into TtsEngine.kt so they are not null at runtime
+      - name: Patch TtsEngine.kt for Kokoro defaults
+        shell: bash
+        run: |
+          FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsEngine.kt"
+          echo "Patching $FILE"
+          perl -0777 -pi -e '
+            s/(init\s*\{\s*\n)/$1    // Auto-injected for Kokoro\n    modelDir = "kokoro-en-v0_19"\n    modelName = "model.onnx"\n    voices = "voices.bin"\n    dataDir = "kokoro-en-v0_19\\/espeak-ng-data"\n\n/;
+          ' "$FILE"
+          echo "Patched defaults in TtsEngine.kt"
+
+      - name: Build APK (Kokoro bundled)
+        working-directory: android/SherpaOnnxTtsEngine
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SherpaOnnxTtsEngine
+          path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/*.apk
