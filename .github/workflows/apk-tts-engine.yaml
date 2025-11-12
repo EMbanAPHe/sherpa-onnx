@@ -24,6 +24,42 @@ jobs:
           ndk: 26.1.10909125
           build-tools: 34.0.0
 
+      # ==========================================================
+      # Add Kokoro model directly under assets/ (not assets/models/)
+      # ==========================================================
+      - name: Add Kokoro (v0.19) model to assets
+        shell: bash
+        run: |
+          cd android/SherpaOnnxTtsEngine/app/src/main/assets
+          wget -q --show-progress \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
+          tar -xjf kokoro-en-v0_19.tar.bz2
+          rm kokoro-en-v0_19.tar.bz2
+          echo "✅ Extracted Kokoro to $(pwd)/kokoro-en-v0_19"
+
+      # ==========================================================
+      # Patch TtsEngine.kt so modelDir etc. are initialized
+      # ==========================================================
+      - name: Patch TtsEngine.kt for Kokoro defaults
+        shell: bash
+        run: |
+          FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsEngine.kt"
+          echo "Patching $FILE"
+
+          # Insert default values inside the init { } block
+          perl -0777 -pi -e '
+            s/(init\s*\{\s*\n)/$1    // Auto-injected for Kokoro\n    modelDir = "kokoro-en-v0_19"\n    modelName = "model.onnx"\n    voices = "voices.bin"\n    dataDir = "kokoro-en-v0_19\\/espeak-ng-data"\n\n/;
+          ' "$FILE"
+
+          echo "✅ Model variables injected into TtsEngine.kt"
+
+      # ==========================================================
+      # Build APK (engine + Kokoro model)
+      # ==========================================================
+      - name: Build APK (Kokoro bundled)
+        working-directory: android/SherpaOnnxTtsEngine
+        run: ./gradlew assembleDebug
+      
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
