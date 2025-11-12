@@ -90,13 +90,6 @@ jobs:
           ls -lh kokoro-en-v0_19
 
       # ==========================================================
-      # Build debug APK (engine + Kokoro model)
-      # ==========================================================
-      - name: Build APK (Kokoro bundled)
-        working-directory: android/SherpaOnnxTtsEngine
-        run: ./gradlew assembleDebug
-
-      # ==========================================================
       # Upload the built APK artifact
       # ==========================================================
       - name: Upload APK
