@@ -68,3 +68,39 @@ jobs:
               dataDir = "kokoro-en-v0_19/espeak-ng-data"\n' "$FILE"
 
           echo "✅ Model variables injected into TtsEngine.kt"
+
+      # ==========================================================
+      # Download Kokoro small INT8 model only
+      # ==========================================================
+      - name: Add Kokoro (v0.19 full model) to APK assets
+        shell: bash
+        run: |
+          ASSETS=android/SherpaOnnxTtsEngine/app/src/main/assets/models
+          mkdir -p "$ASSETS"
+          cd "$ASSETS"
+
+          echo "Downloading Kokoro v0.19 model package..."
+          wget -q --show-progress https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
+
+          echo "Extracting model..."
+          tar -xjf kokoro-en-v0_19.tar.bz2
+          rm kokoro-en-v0_19.tar.bz2
+
+          echo "Contents:"
+          ls -lh kokoro-en-v0_19
+
+      # ==========================================================
+      # Build debug APK (engine + Kokoro model)
+      # ==========================================================
+      - name: Build APK (Kokoro bundled)
+        working-directory: android/SherpaOnnxTtsEngine
+        run: ./gradlew assembleDebug
+
+      # ==========================================================
+      # Upload the built APK artifact
+      # ==========================================================
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SherpaOnnxTtsEngine
+          path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/*.apk
