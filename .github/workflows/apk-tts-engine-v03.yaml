@@ -58,17 +58,13 @@ jobs:
         run: |
           FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsEngine.kt"
           echo "Patching $FILE"
-          perl -0777 -pi -e '
-            s/(init\s*\{\s*\n)/$1    // Auto-injected for Kokoro\n    modelDir = "kokoro-en-v0_19"\n    modelName = "model.onnx"\n    voices = "voices.bin"\n    dataDir = "kokoro-en-v0_19/espeak-ng-data"\n\n/;
-          ' "$FILE"
-          echo "Patched defaults in TtsEngine.kt"
 
-      - name: Build APK (Kokoro bundled)
-        working-directory: android/SherpaOnnxTtsEngine
-        run: ./gradlew assembleDebug
+          # Insert default values immediately after the `init {` line
+          sed -i '/init\s*{/a\
+              // Auto-injected for Kokoro\n\
+              modelDir = "kokoro-en-v0_19"\n\
+              modelName = "model.onnx"\n\
+              voices = "voices.bin"\n\
+              dataDir = "kokoro-en-v0_19/espeak-ng-data"\n' "$FILE"
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: SherpaOnnxTtsEngine
-          path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/*.apk
+          echo "✅ Model variables injected into TtsEngine.kt"
