@@ -125,6 +125,23 @@ class OfflineTts(
         )
     }
 
+    // Stream-only generation: does not allocate a full GeneratedAudio buffer.
+    // It just uses the callback to push chunks.
+    fun generateStreaming(
+        text: String,
+        sid: Int = 0,
+        speed: Float = 1.0f,
+        callback: (samples: FloatArray) -> Int
+    ) {
+        generateStreamImpl(
+            ptr,
+            text = text,
+            sid = sid,
+            speed = speed,
+            callback = callback,
+        )
+    }
+
     fun allocate(assetManager: AssetManager? = null) {
         if (ptr == 0L) {
             ptr = if (assetManager != null) {
@@ -182,6 +199,15 @@ class OfflineTts(
         speed: Float = 1.0f,
         callback: (samples: FloatArray) -> Int
     ): Array<Any>
+
+    // Stream-only JNI entry point: no result array, just callbacks.
+    private external fun generateStreamImpl(
+        ptr: Long,
+        text: String,
+        sid: Int = 0,
+        speed: Float = 1.0f,
+        callback: (samples: FloatArray) -> Int
+    )
 
     companion object {
         init {
