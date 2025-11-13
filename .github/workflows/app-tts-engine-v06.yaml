@@ -88,25 +88,25 @@ jobs:
               if (modelDir == null)  modelDir  = "kokoro-en-v0_19";\n\
               if (modelName == null) modelName = "model.onnx";\n\
               if (voices == null)    voices    = "voices.bin";\n\
-              if (dataDir == null)   dataDir   = "kokoro-en-v0_19/espeak-ng-data";\n' "$FILE"
+              if (dataDir == null)   dataDir   = "kokoro-en-v0_19/espeak-ng-data";\n\
               if (lang == null)      lang      = "eng";\n' "$FILE"
           echo "✅ initTts() guards injected"
 
-          - name: Patch TtsService.kt onGetLanguage
-          shell: bash
-          run: |
-            set -euxo pipefail
-            FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsService.kt"
-            echo "Patching $FILE (onGetLanguage)"
+        - name: Patch TtsService.kt onGetLanguage
+        shell: bash
+        run: |
+          set -euxo pipefail
+          FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsService.kt"
+          echo "Patching $FILE (onGetLanguage)"
 
-            # Sanity check: make sure the original method is there
-            grep -n "override fun onGetLanguage" "$FILE"
+          # Sanity check: make sure the original method is there
+          grep -n "override fun onGetLanguage" "$FILE"
 
-            # Replace the null-unsafe return with a null-safe version
-            sed -i 's|return arrayOf(TtsEngine.lang!!, "", "")|        val lang = TtsEngine.lang ?: "eng"\
-                \n        return arrayOf(lang, "", "")|g' "$FILE"
+          # Replace the null-unsafe return with a null-safe version
+          sed -i 's|return arrayOf(TtsEngine.lang!!, "", "")|        val lang = TtsEngine.lang ?: "eng"\
+              \n        return arrayOf(lang, "", "")|g' "$FILE"
 
-            echo "✅ onGetLanguage() patched"
+          echo "✅ onGetLanguage() patched"
 
       # ==========================================================
       # Build and upload
