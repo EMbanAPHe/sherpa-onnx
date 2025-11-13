@@ -88,11 +88,11 @@ jobs:
               if (modelDir == null)  modelDir  = "kokoro-en-v0_19";\n\
               if (modelName == null) modelName = "model.onnx";\n\
               if (voices == null)    voices    = "voices.bin";\n\
-              if (lang == null)      lang      = "eng";\n
-              if (dataDir == null)   dataDir   = "kokoro-en-v0_19/espeak-ng-data";\n\' "$FILE"
+              if (lang == null)      lang      = "eng";\n\
+              if (dataDir == null)   dataDir   = "kokoro-en-v0_19/espeak-ng-data";\n' "$FILE"
           echo "✅ initTts() guards injected"
 
-        - name: Patch TtsService.kt onGetLanguage
+      - name: Patch TtsService.kt onGetLanguage
         shell: bash
         run: |
           set -euxo pipefail
