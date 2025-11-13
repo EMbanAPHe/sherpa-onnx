@@ -57,18 +57,25 @@ class TtsService : TextToSpeechService() {
     // --- Performance patch: reduce GC and sentence gap ---
     private val tmpPcm16 = ThreadLocal.withInitial { ByteArray(256 * 1024) } // 256 KB scratch buffer
 
-    private fun floatToPcm16InPlace(src: FloatArray, dst: ByteArray, frames: Int) {
-        var j = 0
-        var i = 0
-        val n = frames
-        while (i < n) {
-            val s = (src[i] * 32767.0f).toInt().coerceIn(-32768, 32767)
-            dst[j] = (s and 0xff).toByte()
-            dst[j + 1] = ((s ushr 8) and 0xff).toByte()
-            i += 1
-            j += 2
-        }
+    private fun floatToPcm16InPlace(
+    src: FloatArray,
+    srcOffset: Int,
+    dst: ByteArray,
+    dstOffset: Int,
+    frames: Int,
+) {
+    var j = dstOffset
+    var i = srcOffset
+    val end = srcOffset + frames
+    while (i < end) {
+        val s = (src[i] * 32767.0f).toInt().coerceIn(-32768, 32767)
+        dst[j] = (s and 0xff).toByte()
+        dst[j + 1] = ((s ushr 8) and 0xff).toByte()
+        i += 1
+        j += 2
     }
+}
+
 // --- End patch ---
     override fun onCreate() {
         Log.i(TAG, "onCreate tts service")
@@ -146,19 +153,30 @@ class TtsService : TextToSpeechService() {
         }
 
         val ttsCallback: (FloatArray) -> Int = fun(chunk: FloatArray): Int {
-            val scratch = tmpPcm16.get()
-            val maxBytes = callback.maxBufferSize.coerceAtLeast(4096)
+    val scratch = tmpPcm16.get()
+    val maxBytes = callback.maxBufferSize.coerceAtLeast(4096)
 
-            var srcOff = 0
-            val totalFrames = chunk.size
-            while (srcOff < totalFrames) {
-                val framesThis = ((maxBytes / 2).coerceAtMost(scratch.size / 2)).coerceAtMost(totalFrames - srcOff)
-                floatToPcm16InPlace(chunk.copyOfRange(srcOff, srcOff + framesThis), scratch, framesThis)
-                callback.audioAvailable(scratch, 0, framesThis * 2)
-                srcOff += framesThis
-            }
-            return 1
-        }
+    var srcOff = 0
+    val totalFrames = chunk.size
+    val maxFramesPerWrite = (maxBytes / 2).coerceAtMost(scratch.size / 2)
+
+    while (srcOff < totalFrames) {
+        val framesThis = minOf(maxFramesPerWrite, totalFrames - srcOff)
+
+        floatToPcm16InPlace(
+            src = chunk,
+            srcOffset = srcOff,
+            dst = scratch,
+            dstOffset = 0,
+            frames = framesThis,
+        )
+
+        callback.audioAvailable(scratch, 0, framesThis * 2)
+        srcOff += framesThis
+    }
+    return 1
+}
+
 
         Log.i(TAG, "text: $text")
         tts.generateWithCallback(
