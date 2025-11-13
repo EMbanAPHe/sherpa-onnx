@@ -319,7 +319,7 @@ Java_com_k2fsa_sherpa_onnx_OfflineTts_generateStreamImpl(
         jclass cls = env->GetObjectClass(callback);
 
         jmethodID mid =
-            env->GetMethodID(cls, "invoke", "([F)Ljava/lang/Object;");
+            env->GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;");
 
         jfloatArray samples_arr = env->NewFloatArray(n);
         env->SetFloatArrayRegion(samples_arr, 0, n, samples);
