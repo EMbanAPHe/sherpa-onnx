@@ -94,18 +94,38 @@ class TtsService : TextToSpeechService() {
     }
 
     // https://developer.android.com/reference/kotlin/android/speech/tts/TextToSpeechService#onislanguageavailable
-    override fun onIsLanguageAvailable(_lang: String?, _country: String?, _variant: String?): Int {
-        val lang = _lang ?: ""
+    ooverride fun onIsLanguageAvailable(
+        _lang: String?,
+        _country: String?,
+        _variant: String?
+    ): Int {
+        val requested = _lang ?: ""
 
-        if (lang == TtsEngine.lang || lang == TtsEngine.lang2) {
-            return TextToSpeech.LANG_AVAILABLE
+        // Your primary engine language – provide a fallback if not set yet
+        val primary = TtsEngine.lang ?: "eng" // or "en"
+
+        // Normalize common variants Android might send
+        val normalized = when {
+            requested.equals("eng", ignoreCase = true) -> "eng"
+            // Treat any "en", "en-AU", "en_US", etc. as primary
+            requested.startsWith("en", ignoreCase = true) -> primary
+            else -> requested
         }
 
-        return TextToSpeech.LANG_NOT_SUPPORTED
+        return if (
+            normalized.equals(primary, ignoreCase = true) ||
+            (TtsEngine.lang2 != null && normalized.equals(TtsEngine.lang2, ignoreCase = true))
+        ) {
+            TextToSpeech.LANG_AVAILABLE
+        } else {
+            TextToSpeech.LANG_NOT_SUPPORTED
+        }
     }
 
     override fun onGetLanguage(): Array<String> {
-        return arrayOf(TtsEngine.lang!!, "", "")
+        // Fallback if lang hasn't been initialized yet
+        val lang = TtsEngine.lang ?: "eng" // or "en" if you prefer the 2-letter form
+        return arrayOf(lang, "", "")
     }
 
     // https://developer.android.com/reference/kotlin/android/speech/tts/TextToSpeechService#onLoadLanguage(kotlin.String,%20kotlin.String,%20kotlin.String)
@@ -140,7 +160,19 @@ class TtsService : TextToSpeechService() {
             return
         }
         Log.i(TAG, "text: $text")
-        val tts = TtsEngine.tts!!
+        val tts = TtsEngine.tts ?: run {
+            // Try to initialize if it hasn't been created yet
+            TtsEngine.createTts(applicationContext)
+
+            val created = TtsEngine.tts
+            if (created == null) {
+                // If we still don't have a TTS instance, fail this request gracefully
+                callback.error()
+                return
+            } else {
+                created
+            }
+        }
 
         // Note that AudioFormat.ENCODING_PCM_FLOAT requires API level >= 24
         // callback.start(tts.sampleRate(), AudioFormat.ENCODING_PCM_FLOAT, 1)
