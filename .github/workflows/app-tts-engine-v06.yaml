@@ -73,7 +73,6 @@ jobs:
           test -d kokoro-en-v0_19/espeak-ng-data
           echo "Extracted to $(pwd)/kokoro-en-v0_19"
 
-      # Inject defaults right at usage (initTts) so they cannot be null at runtime
       - name: Patch TtsEngine.kt for Kokoro defaults
         shell: bash
         run: |
