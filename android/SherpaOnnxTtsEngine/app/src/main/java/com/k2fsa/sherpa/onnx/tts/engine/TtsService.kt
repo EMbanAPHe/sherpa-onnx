@@ -179,7 +179,7 @@ class TtsService : TextToSpeechService() {
 
 
         Log.i(TAG, "text: $text")
-        tts.generateWithCallback(
+        tts.generateStreaming(
             text = text,
             sid = TtsEngine.speakerId,
             speed = TtsEngine.speed,
