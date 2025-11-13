@@ -62,7 +62,11 @@ android {
 
 dependencies {
 
-    implementation("io.github.k2-fsa:sherpa-onnx-android:1.12.14")
+    implementation("com.github.k2-fsa:sherpa-onnx:v1.12.15")
+
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.2")
