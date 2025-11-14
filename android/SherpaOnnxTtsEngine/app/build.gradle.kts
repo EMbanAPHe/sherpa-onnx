@@ -8,15 +8,23 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.k2fsa.sherpa.onnx.tts.engine"
-        minSdk = 21
-        targetSdk = 34
-        versionCode = 20251022
-        versionName = "1.12.15"
+            // Base ID for all variants
+            val baseAppId = "com.k2fsa.sherpa.onnx.tts.engine"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        vectorDrawables {
-            useSupportLibrary = true
+            // Optional suffix passed from Gradle property (e.g. -PAPP_ID_SUFFIX=".kokoro_en_v019")
+            val appIdSuffix = (project.findProperty("APP_ID_SUFFIX") as String?) ?: ""
+
+            applicationId = baseAppId + appIdSuffix
+
+            minSdk = 21
+            targetSdk = 34
+            versionCode = 20251022
+            versionName = "1.12.15"
+
+            testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+            vectorDrawables {
+                useSupportLibrary = true
+            }
         }
 
         ndk {
