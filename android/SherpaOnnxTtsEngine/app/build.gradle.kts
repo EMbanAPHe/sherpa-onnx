@@ -3,6 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Base application ID for the TTS engine
+val baseAppId = "com.k2fsa.sherpa.onnx.tts.engine"
+
+// Optional suffix for side-by-side variants, e.g. ".kokoro_en_v019"
+// Comes from the workflow env: APP_ID_SUFFIX
+val appIdSuffix = System.getenv("APP_ID_SUFFIX") ?: ""
+
+// Final applicationId used for this build
+val finalAppId =
+    if (appIdSuffix.isBlank()) baseAppId else baseAppId + appIdSuffix
+
 android {
     namespace = "com.k2fsa.sherpa.onnx.tts.engine"
     compileSdk = 34
