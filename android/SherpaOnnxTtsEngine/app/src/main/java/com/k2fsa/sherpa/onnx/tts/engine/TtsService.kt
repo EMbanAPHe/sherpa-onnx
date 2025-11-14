@@ -231,6 +231,7 @@ class TtsService : TextToSpeechService() {
         }
         return byteArray
     }
+    
     companion object {
         private const val TAG = "TtsService"
     }
