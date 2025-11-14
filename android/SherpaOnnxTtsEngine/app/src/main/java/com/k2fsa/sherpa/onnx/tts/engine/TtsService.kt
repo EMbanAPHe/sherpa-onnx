@@ -74,9 +74,6 @@ class TtsService : TextToSpeechService() {
         i += 1
         j += 2
     }
-    companion object {
-        private const val TAG = "TtsService"
-    }
 }
 
 // --- End patch ---
@@ -233,5 +230,8 @@ class TtsService : TextToSpeechService() {
             byteArray[2 * i + 1] = (sample shr 8).toByte()
         }
         return byteArray
+    }
+    companion object {
+        private const val TAG = "TtsService"
     }
 }
