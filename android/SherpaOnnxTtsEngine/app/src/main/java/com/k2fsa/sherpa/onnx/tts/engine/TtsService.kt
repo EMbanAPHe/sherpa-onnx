@@ -74,6 +74,9 @@ class TtsService : TextToSpeechService() {
         i += 1
         j += 2
     }
+    companion object {
+        private const val TAG = "TtsService"
+    }
 }
 
 // --- End patch ---
