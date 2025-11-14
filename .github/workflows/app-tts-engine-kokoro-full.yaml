@@ -7,17 +7,14 @@ jobs:
   build-tts-engine:
     runs-on: ubuntu-latest
     env:
-      # Model bits you *already* use
+      # Model bits
       MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2"
       MODEL_DIR_NAME: "kokoro-en-v0_19"
 
-      # New: packaging bits
+      # Packaging bits (for side-by-side install)
       APP_ID_SUFFIX: ".kokoro_en_v019"
       APP_NAME: "TTS Engine: Kokoro EN v0_19"
       APK_BASENAME: "SherpaTtsEngine-Kokoro-EN-v0_19"
-      
-  build-tts-engine:
-    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -50,17 +47,13 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}
 
-      # ==========================================================
-      # Build JNI libs using the root script (native side)
-      # ==========================================================
+      # 1) Build JNI libs
       - name: Build JNI libraries (arm64-v8a)
         shell: bash
         run: |
           set -euxo pipefail
           ./build-android-arm64-v8a.sh
 
-      # Copy generated .so files into the app's jniLibs so Gradle
-      # will package them into the APK.
       - name: Copy JNI libs into TTS Engine jniLibs
         shell: bash
         run: |
@@ -69,41 +62,40 @@ jobs:
           cp -v build-android-arm64-v8a/install/lib/*.so \
              android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/
 
-      # ==========================================================
-      # Add Kokoro model directly under assets/ (not assets/models/)
-      # ==========================================================
+      # 2) Download & unpack Kokoro model into assets
       - name: Add Kokoro (v0.19) model to assets
         shell: bash
         run: |
           set -euxo pipefail
           cd android/SherpaOnnxTtsEngine/app/src/main/assets
-          wget -q --show-progress https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2
-          tar -xjf kokoro-en-v0_19.tar.bz2
-          rm kokoro-en-v0_19.tar.bz2
-          test -f kokoro-en-v0_19/model.onnx
-          test -f kokoro-en-v0_19/voices.bin
-          test -d kokoro-en-v0_19/espeak-ng-data
-          echo "Extracted to $(pwd)/kokoro-en-v0_19"
+          wget -q --show-progress "$MODEL_ARCHIVE_URL" -O model.tar.bz2
+          tar -xjf model.tar.bz2
+          rm model.tar.bz2
+          test -f "$MODEL_DIR_NAME/model.onnx"
+          test -f "$MODEL_DIR_NAME/voices.bin"
+          test -d "$MODEL_DIR_NAME/espeak-ng-data"
+          echo "Extracted to $(pwd)/$MODEL_DIR_NAME"
 
-      # Inject defaults right at usage (initTts) so they cannot be null at runtime
+      # 3) Patch TtsEngine.kt to set Kokoro defaults at initTts()
       - name: Patch TtsEngine.kt for Kokoro defaults
         shell: bash
         run: |
           set -euxo pipefail
           FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsEngine.kt"
           echo "Patching $FILE"
-          # Ensure the pattern exists to avoid silent no-op
           grep -n "fun initTts" "$FILE"
-          # Insert guards immediately after the initTts(context) opening brace.
+
           sed -i '/fun initTts\s*(context: .*).*{\s*$/a\
               // Auto-guard for Kokoro (injected by CI)\n\
-              if (modelDir == null)  modelDir  = "kokoro-en-v0_19";\n\
+              if (modelDir == null)  modelDir  = "'"$MODEL_DIR_NAME"'";\n\
               if (modelName == null) modelName = "model.onnx";\n\
               if (voices == null)    voices    = "voices.bin";\n\
               if (lang == null)      lang      = "eng";\n\
-              if (dataDir == null)   dataDir   = "kokoro-en-v0_19/espeak-ng-data";\n' "$FILE"
+              if (dataDir == null)   dataDir   = "'"$MODEL_DIR_NAME"'/espeak-ng-data";\n' "$FILE"
+
           echo "✅ initTts() guards injected"
 
+      # 4) Patch TtsService.kt onGetLanguage to be null-safe
       - name: Patch TtsService.kt onGetLanguage
         shell: bash
         run: |
@@ -111,24 +103,37 @@ jobs:
           FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsService.kt"
           echo "Patching $FILE (onGetLanguage)"
 
-          # Sanity check: make sure the original method is there
           grep -n "override fun onGetLanguage" "$FILE"
 
-          # Replace the null-unsafe return with a null-safe version
           sed -i 's|return arrayOf(TtsEngine.lang!!, "", "")|        val lang = TtsEngine.lang ?: "eng"\
               \n        return arrayOf(lang, "", "")|g' "$FILE"
 
           echo "✅ onGetLanguage() patched"
 
-      # ==========================================================
-      # Build and upload
-      # ==========================================================
+      # 5) Patch app_name and build with custom applicationId suffix
+      - name: Patch app_name for this variant
+        shell: bash
+        run: |
+          set -euxo pipefail
+          STRINGS_FILE="android/SherpaOnnxTtsEngine/app/src/main/res/values/strings.xml"
+          sed -i 's#<string name="app_name">.*</string>#<string name="app_name">'"$APP_NAME"'</string>#' "$STRINGS_FILE"
+          echo "✅ app_name patched to $APP_NAME"
+
       - name: Build TTS Engine APK
         working-directory: android/SherpaOnnxTtsEngine
-        run: ./gradlew assembleDebug
+        run: |
+          set -euxo pipefail
+          ./gradlew assembleDebug -PAPP_ID_SUFFIX="$APP_ID_SUFFIX"
+
+      - name: Rename APK
+        run: |
+          set -euxo pipefail
+          cd android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug
+          mv app-debug.apk "$APK_BASENAME.apk"
+          echo "✅ Renamed APK to $APK_BASENAME.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SherpaOnnxTtsEngine
-          path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/*.apk
+          name: ${{ env.APK_BASENAME }}
+          path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/${{ env.APK_BASENAME }}.apk
