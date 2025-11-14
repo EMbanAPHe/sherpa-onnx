@@ -94,7 +94,7 @@ class TtsService : TextToSpeechService() {
     }
 
     // https://developer.android.com/reference/kotlin/android/speech/tts/TextToSpeechService#onislanguageavailable
-    ooverride fun onIsLanguageAvailable(
+    override fun onIsLanguageAvailable(
         _lang: String?,
         _country: String?,
         _variant: String?
