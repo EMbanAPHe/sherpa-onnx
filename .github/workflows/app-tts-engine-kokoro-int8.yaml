@@ -7,11 +7,11 @@ jobs:
   build-tts-engine:
     runs-on: ubuntu-latest
     env:
-      MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-small-int8.tar.bz2"
-      MODEL_DIR_NAME: "kokoro-en-small-int8"
+      MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2"
+      MODEL_DIR_NAME: "kokoro-int8-en-v0_19"
 
-      APP_ID_SUFFIX: ".kokoro_en_small_int8"
-      APP_NAME: "TTS Engine: Kokoro EN Small INT8"
+      APP_ID_SUFFIX: ".kokoro-int8-en-v0_19"
+      APP_NAME: "TTS: Kokoro INT8"
       APK_BASENAME: "SherpaTtsEngine-Kokoro-EN-small-int8"
 
     steps:
