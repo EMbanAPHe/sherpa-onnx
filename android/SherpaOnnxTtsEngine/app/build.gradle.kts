@@ -3,44 +3,31 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Base application ID for the TTS engine
-val baseAppId = "com.k2fsa.sherpa.onnx.tts.engine"
-
-// Optional suffix for side-by-side variants, e.g. ".kokoro_en_v019"
-// Comes from the workflow env: APP_ID_SUFFIX
-val appIdSuffix = System.getenv("APP_ID_SUFFIX") ?: ""
-
-// Final applicationId used for this build
-val finalAppId =
-    if (appIdSuffix.isBlank()) baseAppId else baseAppId + appIdSuffix
-
 android {
     namespace = "com.k2fsa.sherpa.onnx.tts.engine"
     compileSdk = 34
 
+    android {
+    namespace = "com.k2fsa.sherpa.onnx.tts.engine"
+    compileSdk = 34
+
     defaultConfig {
-            // Base ID for all variants
-            val baseAppId = "com.k2fsa.sherpa.onnx.tts.engine"
+        // Base ID for TTS engine
+        val baseId = "com.k2fsa.sherpa.onnx.tts.engine"
 
-            // Optional suffix passed from Gradle property (e.g. -PAPP_ID_SUFFIX=".kokoro_en_v019")
-            val appIdSuffix = (project.findProperty("APP_ID_SUFFIX") as String?) ?: ""
+        // Optional suffix passed as: ./gradlew ... -PAPP_ID_SUFFIX=".kokoro-int8-en-v0_19"
+        val suffix = (project.findProperty("APP_ID_SUFFIX") as String?) ?: ""
 
-            applicationId = baseAppId + appIdSuffix
+        applicationId = baseId + suffix
 
-            minSdk = 21
-            targetSdk = 34
-            versionCode = 20251022
-            versionName = "1.12.15"
+        minSdk = 21
+        targetSdk = 34
+        versionCode = 20250918
+        versionName = "1.12.15"
 
-            testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-            vectorDrawables {
-                useSupportLibrary = true
-            }
-        }
-
-        ndk {
-            // Build only for modern ARM64, which your Pixel 8 Pro uses
-            abiFilters += listOf("arm64-v8a")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary = true
         }
 
     }
