@@ -69,9 +69,12 @@ jobs:
           wget -q --show-progress "$MODEL_ARCHIVE_URL" -O model.tar.bz2
           tar -xjf model.tar.bz2
           rm model.tar.bz2
-          test -f "$MODEL_DIR_NAME/model.onnx"
+
+          # INT8 tarball contains model.int8.onnx, not model.onnx
+          test -f "$MODEL_DIR_NAME/model.int8.onnx"
           test -f "$MODEL_DIR_NAME/voices.bin"
           test -d "$MODEL_DIR_NAME/espeak-ng-data"
+
           echo "Extracted to $(pwd)/$MODEL_DIR_NAME"
 
       # 3) Patch TtsEngine.kt to set Kokoro defaults at initTts()
@@ -86,7 +89,7 @@ jobs:
           sed -i '/fun initTts\s*(context: .*).*{\s*$/a\
               // Auto-guard for Kokoro (injected by CI)\n\
               if (modelDir == null)  modelDir  = "'"$MODEL_DIR_NAME"'";\n\
-              if (modelName == null) modelName = "model.onnx";\n\
+              if (modelName == null) modelName = "model.int8.onnx";\n\
               if (voices == null)    voices    = "voices.bin";\n\
               if (lang == null)      lang      = "eng";\n\
               if (dataDir == null)   dataDir   = "'"$MODEL_DIR_NAME"'/espeak-ng-data";\n' "$FILE"
