@@ -11,7 +11,7 @@ jobs:
       MODEL_DIR_NAME: "kokoro-int8-en-v0_19"
 
       APP_ID_SUFFIX: ".kokoro_int8_en_v0_19"
-      APP_NAME: "TTS: Kokoro INT8 EN v0_19"
+      APP_NAME: "Kokoro INT8 EN v0_19 TTS"
       APK_BASENAME: "SherpaTtsEngine-Kokoro-EN-small-int8"
 
     steps:
