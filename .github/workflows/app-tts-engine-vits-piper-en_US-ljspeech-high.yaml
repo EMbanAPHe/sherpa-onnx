@@ -11,7 +11,7 @@ jobs:
       MODEL_DIR_NAME: "vits-piper-en_US-ljspeech-high"
       MODEL_FILE_NAME: "en_US-ljspeech-high.onnx"
 
-      APP_ID_SUFFIX: ".vits-piper-en_US-ljspeech-high"
+      APP_ID_SUFFIX: ".vits_piper_en_US_ljspeech_high"
       APP_NAME: "TTS_Piper_US_LJS_high"
       APK_BASENAME: "SherpaTtsEngine-Piper-en_US-ljspeech-high"
 
