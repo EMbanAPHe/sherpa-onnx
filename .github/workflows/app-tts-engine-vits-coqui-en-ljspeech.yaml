@@ -12,7 +12,7 @@ jobs:
       MODEL_FILE_NAME: "model.onnx"
 
       APP_ID_SUFFIX: ".vits-coqui-en-ljspeech"
-      APP_NAME: "Coqui LJSpeech TTS"
+      APP_NAME: "TTS_Coqui_LJSpeech"
       APK_BASENAME: "SherpaTtsEngine-Coqui-en-ljspeech"
 
 
