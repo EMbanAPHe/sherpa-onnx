@@ -1,4 +1,4 @@
-name: app-tts-engine-kokoro-en-v019
+name: app-tts-engine-vits-coqui-en-vctk
 
 on:
   workflow_dispatch:
@@ -7,12 +7,14 @@ jobs:
   build-tts-engine:
     runs-on: ubuntu-latest
     env:
-      MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2"
-      MODEL_DIR_NAME: "kokoro-int8-en-v0_19"
+      # Model bits
+      MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-coqui-en-vctk.tar.bz2"
+      MODEL_DIR_NAME: "vits-coqui-en-vctk"
 
-      APP_ID_SUFFIX: ".kokoro_int8_en_v0_19"
-      APP_NAME: "TTS: Kokoro INT8"
-      APK_BASENAME: "SherpaTtsEngine-Kokoro-EN-small-int8"
+      # Packaging bits (for side-by-side install)
+      APP_ID_SUFFIX: ".vits_coqui_en_vctk"
+      APP_NAME: "TTS: VITS Coqui EN VCTK"
+      APK_BASENAME: "SherpaTtsEngine-VITS-Coqui-EN-VCTK"
 
     steps:
       - name: Checkout repository
@@ -33,6 +35,7 @@ jobs:
 
       - name: Install required tools
         run: |
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y wget unzip
 
@@ -42,43 +45,42 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-${{ runner.os }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
-      # 1) Build JNI libs
-      - name: Build JNI libraries (arm64-v8a)
+      # 1) Prepare Android project
+      - name: Prepare Android project
         shell: bash
         run: |
           set -euxo pipefail
-          ./build-android-arm64-v8a.sh
+          cd android/SherpaOnnxTtsEngine
+          chmod +x ./gradlew
 
-      - name: Copy JNI libs into TTS Engine jniLibs
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a
-          cp -v build-android-arm64-v8a/install/lib/*.so \
-             android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/
-
-      # 2) Download & unpack Kokoro model into assets
-      - name: Add Kokoro (v0.19) model to assets
+      # 2) Download VITS Coqui EN VCTK model into app assets
+      - name: Add VITS Coqui EN VCTK model to assets
         shell: bash
         run: |
           set -euxo pipefail
           cd android/SherpaOnnxTtsEngine/app/src/main/assets
+
+          echo "Downloading $MODEL_ARCHIVE_URL"
           wget -q --show-progress "$MODEL_ARCHIVE_URL" -O model.tar.bz2
           tar -xjf model.tar.bz2
           rm model.tar.bz2
 
-          # INT8 bundle uses model.int8.onnx
-          test -f "$MODEL_DIR_NAME/model.int8.onnx"
-          test -f "$MODEL_DIR_NAME/voices.bin"
+          # VITS Coqui EN VCTK bundle layout:
+          #   $MODEL_DIR_NAME/model.onnx
+          #   $MODEL_DIR_NAME/tokens.txt
+          #   $MODEL_DIR_NAME/espeak-ng-data/
+          test -f "$MODEL_DIR_NAME/model.onnx"
+          test -f "$MODEL_DIR_NAME/tokens.txt"
           test -d "$MODEL_DIR_NAME/espeak-ng-data"
 
           echo "Extracted to $(pwd)/$MODEL_DIR_NAME"
 
-      # 3) Patch TtsEngine.kt to set Kokoro defaults at initTts()
-      - name: Patch TtsEngine.kt for Kokoro defaults
+      # 3) Patch TtsEngine.kt to set VITS defaults at initTts()
+      - name: Patch TtsEngine.kt for VITS Coqui EN VCTK defaults
         shell: bash
         run: |
           set -euxo pipefail
@@ -87,10 +89,9 @@ jobs:
           grep -n "fun initTts" "$FILE"
 
           sed -i '/fun initTts\s*(context: .*).*{\s*$/a\
-              // Auto-guard for Kokoro (injected by CI)\n\
+              // Auto-guard for VITS Coqui EN VCTK (injected by CI)\n\
               if (modelDir == null)  modelDir  = "'"$MODEL_DIR_NAME"'";\n\
-              if (modelName == null) modelName = "model.int8.onnx";\n\
-              if (voices == null)    voices    = "voices.bin";\n\
+              if (modelName == null) modelName = "model.onnx";\n\
               if (lang == null)      lang      = "eng";\n\
               if (dataDir == null)   dataDir   = "'"$MODEL_DIR_NAME"'/espeak-ng-data";\n' "$FILE"
 
@@ -102,28 +103,43 @@ jobs:
         run: |
           set -euxo pipefail
           FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsService.kt"
-          echo "Patching $FILE (onGetLanguage)"
+          echo "Patching $FILE"
+          grep -n "onGetLanguage" "$FILE"
 
-          grep -n "override fun onGetLanguage" "$FILE"
-
-          sed -i 's|return arrayOf(TtsEngine.lang!!, "", "")|        val lang = TtsEngine.lang ?: "eng"\
-              \n        return arrayOf(lang, "", "")|g' "$FILE"
+          # Replace onGetLanguage implementation with a null-safe one
+          sed -i '/override fun onGetLanguage/,/}/c\
+      override fun onGetLanguage(): Array<String?>? {\n\
+          // Null-safe language reporting for TTS engine\n\
+          val lang = TtsEngine.lang ?: return arrayOf("eng", "US", "")\n\
+          return when (lang) {\n\
+              "eng" -> arrayOf("eng", "US", "")\n\
+              "zho" -> arrayOf("zho", "CN", "")\n\
+              else -> arrayOf("eng", "US", "")\n\
+          }\n\
+      }' "$FILE"
 
           echo "✅ onGetLanguage() patched"
 
-      # 5) Patch app_name and build with custom applicationId suffix
-      - name: Patch app_name for this variant
+      # 5) Update app_name so it shows up clearly in the system TTS list
+      - name: Patch app_name in strings.xml
         shell: bash
         run: |
           set -euxo pipefail
           STRINGS_FILE="android/SherpaOnnxTtsEngine/app/src/main/res/values/strings.xml"
-          sed -i 's#<string name="app_name">.*</string>#<string name="app_name">'"$APP_NAME"'</string>#' "$STRINGS_FILE"
-          echo "✅ app_name patched to $APP_NAME"
+          echo "Patching $STRINGS_FILE"
+          grep -n "app_name" "$STRINGS_FILE" || true
 
-      - name: Build TTS Engine APK
-        working-directory: android/SherpaOnnxTtsEngine
+          # Replace the app_name value while keeping the XML intact
+          sed -i 's#<string name="app_name">.*</string>#<string name="app_name">'"$APP_NAME"'</string>#' "$STRINGS_FILE"
+
+          echo "✅ app_name set to $APP_NAME"
+
+      # 6) Build the APK (debug) with custom APP_ID_SUFFIX
+      - name: Build debug APK
+        shell: bash
         run: |
           set -euxo pipefail
+          cd android/SherpaOnnxTtsEngine
           ./gradlew assembleDebug -PAPP_ID_SUFFIX="$APP_ID_SUFFIX"
 
       - name: Rename APK
