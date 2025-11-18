@@ -12,7 +12,7 @@ jobs:
       MODEL_FILE_NAME: "en_GB-sweetbbak-amy.onnx"
 
       APP_ID_SUFFIX: ".vits-piper-en_GB-sweetbbak-amy"
-      APP_NAME: "Piper en_GB sweetbbak-amy TTS"
+      APP_NAME: "TTS_Piper_GB_sweetbbak_amy"
       APK_BASENAME: "SherpaTtsEngine-Piper-en_GB-sweetbbak-amy"
 
     steps:
