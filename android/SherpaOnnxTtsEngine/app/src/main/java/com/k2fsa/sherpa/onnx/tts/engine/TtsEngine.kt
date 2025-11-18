@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.getOfflineTtsConfig
 import java.io.File
@@ -29,6 +30,7 @@ object TtsEngine {
 
     val speedState: MutableState<Float> = mutableFloatStateOf(1.0F)
     val speakerIdState: MutableState<Int> = mutableIntStateOf(0)
+    val useSystemRatePitchState: MutableState<Boolean> = mutableStateOf(false)
 
     var speed: Float
         get() = speedState.value
@@ -40,6 +42,12 @@ object TtsEngine {
         get() = speakerIdState.value
         set(value) {
             speakerIdState.value = value
+        }
+
+    var useSystemRatePitch: Boolean
+        get() = useSystemRatePitchState.value
+        set(value) {
+            useSystemRatePitchState.value = value
         }
 
     private var modelDir: String? = null
@@ -192,6 +200,11 @@ object TtsEngine {
             val newDir = copyDataDir(context, dataDir!!)
             dataDir = "$newDir/$dataDir"
         }
+
+        val prefs = PreferenceHelper(context)
+        speed = prefs.getSpeed()
+        speakerId = prefs.getSid()
+        useSystemRatePitch = prefs.getUseSystemRatePitch()
 
         val config = getOfflineTtsConfig(
             modelDir = modelDir!!,
