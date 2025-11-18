@@ -78,11 +78,6 @@ class TtsService : TextToSpeechService() {
 }
 
 // --- End patch ---
-    override fun onGetSettingsIntent(): Intent? {
-        return Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-    }
 
     override fun onCreate() {
         Log.i(TAG, "onCreate tts service")
