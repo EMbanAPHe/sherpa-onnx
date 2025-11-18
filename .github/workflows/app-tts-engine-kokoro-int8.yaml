@@ -10,7 +10,7 @@ jobs:
       MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2"
       MODEL_DIR_NAME: "kokoro-int8-en-v0_19"
 
-      APP_ID_SUFFIX: ".kokoro-int8-en-v0_19"
+      APP_ID_SUFFIX: ".kokoro_int8_en_v0_19"
       APP_NAME: "TTS: Kokoro INT8"
       APK_BASENAME: "SherpaTtsEngine-Kokoro-EN-small-int8"
 
@@ -70,7 +70,7 @@ jobs:
           tar -xjf model.tar.bz2
           rm model.tar.bz2
 
-          # INT8 tarball contains model.int8.onnx, not model.onnx
+          # INT8 bundle uses model.int8.onnx
           test -f "$MODEL_DIR_NAME/model.int8.onnx"
           test -f "$MODEL_DIR_NAME/voices.bin"
           test -d "$MODEL_DIR_NAME/espeak-ng-data"
