@@ -6,6 +6,7 @@ class PreferenceHelper(context: Context) {
     private val PREFS_NAME = "com.k2fsa.sherpa.onnx.tts.engine"
     private val SPEED_KEY = "speed"
     private val SID_KEY = "speaker_id"
+    private val USE_SYSTEM_RATE_PITCH_KEY = "use_system_rate_pitch"
 
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -28,5 +29,15 @@ class PreferenceHelper(context: Context) {
 
     fun getSid(): Int {
         return sharedPreferences.getInt(SID_KEY, 0)
+    }
+
+    fun setUseSystemRatePitch(value: Boolean) {
+        sharedPreferences.edit()
+            .putBoolean(USE_SYSTEM_RATE_PITCH_KEY, value)
+            .apply()
+    }
+
+    fun getUseSystemRatePitch(): Boolean {
+        return sharedPreferences.getBoolean(USE_SYSTEM_RATE_PITCH_KEY, false)
     }
 }
