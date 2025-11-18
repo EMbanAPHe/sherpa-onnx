@@ -12,7 +12,7 @@ jobs:
       MODEL_FILE_NAME: "model.onnx"
 
       APP_ID_SUFFIX: ".vits-icefall-en_US-ljspeech-medium"
-      APP_NAME: "TTS: Icefall LJS medium"
+      APP_NAME: "Icefall LJS medium TTS"
       APK_BASENAME: "SherpaTtsEngine-Icefall-en_US-ljspeech-medium"
 
     steps:
