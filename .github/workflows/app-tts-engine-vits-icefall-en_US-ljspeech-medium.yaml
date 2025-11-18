@@ -11,7 +11,7 @@ jobs:
       MODEL_DIR_NAME: "vits-icefall-en_US-ljspeech-medium"
       MODEL_FILE_NAME: "model.onnx"
 
-      APP_ID_SUFFIX: ".vits-icefall-en_US-ljspeech-medium"
+      APP_ID_SUFFIX: ".vits_icefall_en_US_ljspeech_medium"
       APP_NAME: "TTS_Icefall_LJS_medium"
       APK_BASENAME: "SherpaTtsEngine-Icefall-en_US-ljspeech-medium"
 
