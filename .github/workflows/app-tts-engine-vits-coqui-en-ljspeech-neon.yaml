@@ -11,7 +11,7 @@ jobs:
       MODEL_DIR_NAME: "vits-coqui-en-ljspeech-neon"
       MODEL_FILE_NAME: "model.onnx"
 
-      APP_ID_SUFFIX: ".vits-coqui-en-ljspeech-neon"
+      APP_ID_SUFFIX: ".vits_coqui_en_ljspeech_neon"
       APP_NAME: "TTS_Coqui_LJSpeech_Neon"
       APK_BASENAME: "SherpaTtsEngine-Coqui-en-ljspeech-neon"
 
