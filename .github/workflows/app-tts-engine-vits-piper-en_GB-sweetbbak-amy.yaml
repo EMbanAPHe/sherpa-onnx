@@ -11,7 +11,7 @@ jobs:
       MODEL_DIR_NAME: "vits-piper-en_GB-sweetbbak-amy"
       MODEL_FILE_NAME: "en_GB-sweetbbak-amy.onnx"
 
-      APP_ID_SUFFIX: ".vits-piper-en_GB-sweetbbak-amy"
+      APP_ID_SUFFIX: ".vits_piper_en_GB_sweetbbak_amy"
       APP_NAME: "TTS_Piper_GB_sweetbbak_amy"
       APK_BASENAME: "SherpaTtsEngine-Piper-en_GB-sweetbbak-amy"
 
