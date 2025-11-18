@@ -1,5 +1,6 @@
 package com.k2fsa.sherpa.onnx.tts.engine
 
+import android.content.Intent
 import android.media.AudioFormat
 import android.speech.tts.SynthesisCallback
 import android.speech.tts.SynthesisRequest
@@ -77,6 +78,12 @@ class TtsService : TextToSpeechService() {
 }
 
 // --- End patch ---
+    override fun onGetSettingsIntent(): Intent? {
+        return Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+
     override fun onCreate() {
         Log.i(TAG, "onCreate tts service")
         super.onCreate()
@@ -210,16 +217,28 @@ class TtsService : TextToSpeechService() {
 }
 
 
-        Log.i(TAG, "text: $text")
+        val effectiveSpeed = if (TtsEngine.useSystemRatePitch) {
+            val sysRate = request.speechRate    // 100 = normal
+            (sysRate / 100.0f).coerceIn(0.2f, 3.0f)
+        } else {
+            TtsEngine.speed
+        }
+
+        Log.i(
+            TAG,
+            "text: $text, effectiveSpeed=$effectiveSpeed, sysRate=${request.speechRate}, useSystem=${TtsEngine.useSystemRatePitch}"
+        )
+
         tts.generateStreaming(
             text = text,
             sid = TtsEngine.speakerId,
-            speed = TtsEngine.speed,
+            speed = effectiveSpeed,
             callback = ttsCallback,
         )
 
         callback.done()
     }
+
 
     private fun floatArrayToByteArray(audio: FloatArray): ByteArray {
         // byteArray is actually a ShortArray
