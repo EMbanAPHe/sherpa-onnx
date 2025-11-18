@@ -1,4 +1,4 @@
-name: app-tts-engine-vits-coqui-en-vctk
+name: app-tts-engine-kitten-nano-en-v0_1-fp16
 
 on:
   workflow_dispatch:
@@ -62,20 +62,17 @@ jobs:
              android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/
 
       # 2) Download & unpack Kokoro model into assets
-      - name: Add Kokoro (v0.19) model to assets
+      - name: Add kitten-nano-en-v0_1-fp16 model to assets
         shell: bash
         run: |
           set -euxo pipefail
           cd android/SherpaOnnxTtsEngine/app/src/main/assets
+
           wget -q --show-progress "$MODEL_ARCHIVE_URL" -O model.tar.bz2
           tar -xjf model.tar.bz2
           rm model.tar.bz2
 
-          # VITS Coqui EN VCTK bundle layout:
-          #   $MODEL_DIR_NAME/model.onnx
-          #   $MODEL_DIR_NAME/tokens.txt
-          #   $MODEL_DIR_NAME/espeak-ng-data/
-          test -f "$MODEL_DIR_NAME/model.onnx"
+          test -f "$MODEL_DIR_NAME/$MODEL_FILE_NAME"
           test -f "$MODEL_DIR_NAME/tokens.txt"
           test -d "$MODEL_DIR_NAME/espeak-ng-data"
 
@@ -101,21 +98,19 @@ jobs:
           echo "✅ initTts() guards injected"
 
       # 4) Patch TtsService.kt onGetLanguage to be null-safe
-      - name: Add kitten-nano-en-v0_1-fp16 model to assets
+      - name: Patch TtsService.kt onGetLanguage
         shell: bash
         run: |
           set -euxo pipefail
-          cd android/SherpaOnnxTtsEngine/app/src/main/assets
+          FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsService.kt"
+          echo "Patching $FILE (onGetLanguage)"
 
-          wget -q --show-progress "$MODEL_ARCHIVE_URL" -O model.tar.bz2
-          tar -xjf model.tar.bz2
-          rm model.tar.bz2
+          grep -n "override fun onGetLanguage" "$FILE"
 
-          test -f "$MODEL_DIR_NAME/$MODEL_FILE_NAME"
-          test -f "$MODEL_DIR_NAME/tokens.txt"
-          test -d "$MODEL_DIR_NAME/espeak-ng-data"
+          sed -i 's|return arrayOf(TtsEngine.lang!!, "", "")|        val lang = TtsEngine.lang ?: "eng"\
+              \n        return arrayOf(lang, "", "")|g' "$FILE"
 
-          echo "Extracted to $(pwd)/$MODEL_DIR_NAME"
+          echo "✅ onGetLanguage() patched"
 
       # 5) Patch app_name and build with custom applicationId suffix
       - name: Patch app_name for this variant
