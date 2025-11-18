@@ -92,7 +92,7 @@ jobs:
               if (modelDir == null)  modelDir  = "'"$MODEL_DIR_NAME"'";\n\
               if (modelName == null) modelName = "'"$MODEL_FILE_NAME"'";\n\
               if (lang == null)      lang      = "eng";\n\
-              if (dataDir == null)   dataDir   = "'"$MODEL_DIR_NAME"'/espeak-ng-data";\n'
+              if (dataDir == null)   dataDir   = "'"$MODEL_DIR_NAME"'/espeak-ng-data";\n' "$FILE"
 
           echo "✅ initTts() guards injected"
 
