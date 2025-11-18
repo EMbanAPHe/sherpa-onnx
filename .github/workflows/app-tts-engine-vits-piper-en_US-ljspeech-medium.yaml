@@ -1,0 +1,141 @@
+name: app-tts-engine-vits-piper-en_US-ljspeech-medium
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-tts-engine:
+    runs-on: ubuntu-latest
+    env:
+      MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-medium.tar.bz2"
+      MODEL_DIR_NAME: "vits-piper-en_US-ljspeech-medium"
+      MODEL_FILE_NAME: "en_US-ljspeech-medium.onnx"
+
+      APP_ID_SUFFIX: ".vits-piper-en_US-ljspeech-medium"
+      APP_NAME: "TTS: Piper en_US LJS medium"
+      APK_BASENAME: "SherpaTtsEngine-Piper-en_US-ljspeech-medium"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          ndk: 26.1.10909125
+          build-tools: 34.0.0
+
+      - name: Install required tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}
+
+      # 1) Build JNI libs
+      - name: Build JNI libraries (arm64-v8a)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ./build-android-arm64-v8a.sh
+
+      - name: Copy JNI libs into TTS Engine jniLibs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a
+          cp -v build-android-arm64-v8a/install/lib/*.so \
+             android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/
+
+      # 2) Download & unpack Kokoro model into assets
+      - name: Add vits-piper-en_GB-sweetbbak-amy model to assets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd android/SherpaOnnxTtsEngine/app/src/main/assets
+
+          wget -q --show-progress "$MODEL_ARCHIVE_URL" -O model.tar.bz2
+          tar -xjf model.tar.bz2
+          rm model.tar.bz2
+
+          test -f "$MODEL_DIR_NAME/$MODEL_FILE_NAME"
+          test -f "$MODEL_DIR_NAME/tokens.txt"
+          test -d "$MODEL_DIR_NAME/espeak-ng-data"
+
+          echo "Extracted to $(pwd)/$MODEL_DIR_NAME"
+
+      # 3) Patch TtsEngine.kt to set VITS defaults at initTts()
+      - name: Patch TtsEngine.kt for VITS Coqui EN VCTK defaults
+        shell: bash
+        run: |
+          set -euxo pipefail
+          FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsEngine.kt"
+          echo "Patching $FILE"
+          grep -n "fun initTts" "$FILE"
+
+          sed -i '/fun initTts\s*(context: .*).*{\s*$/a\
+              // Auto-guard for VITS Coqui EN VCTK (injected by CI)\n\
+              if (modelDir == null)  modelDir  = "'"$MODEL_DIR_NAME"'";\n\
+              if (modelName == null) modelName = "'"$MODEL_FILE_NAME"'";\n\
+              if (lang == null)      lang      = "eng";\n\
+              if (dataDir == null)   dataDir   = "'"$MODEL_DIR_NAME"'/espeak-ng-data";\n'
+
+
+          echo "✅ initTts() guards injected"
+
+      # 4) Patch TtsService.kt onGetLanguage to be null-safe
+      - name: Patch TtsService.kt onGetLanguage
+        shell: bash
+        run: |
+          set -euxo pipefail
+          FILE="android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/TtsService.kt"
+          echo "Patching $FILE (onGetLanguage)"
+
+          grep -n "override fun onGetLanguage" "$FILE"
+
+          sed -i 's|return arrayOf(TtsEngine.lang!!, "", "")|        val lang = TtsEngine.lang ?: "eng"\
+              \n        return arrayOf(lang, "", "")|g' "$FILE"
+
+          echo "✅ onGetLanguage() patched"
+
+      # 5) Patch app_name and build with custom applicationId suffix
+      - name: Patch app_name for this variant
+        shell: bash
+        run: |
+          set -euxo pipefail
+          STRINGS_FILE="android/SherpaOnnxTtsEngine/app/src/main/res/values/strings.xml"
+          sed -i 's#<string name="app_name">.*</string>#<string name="app_name">'"$APP_NAME"'</string>#' "$STRINGS_FILE"
+          echo "✅ app_name patched to $APP_NAME"
+
+      - name: Build TTS Engine APK
+        working-directory: android/SherpaOnnxTtsEngine
+        run: |
+          set -euxo pipefail
+          ./gradlew assembleDebug -PAPP_ID_SUFFIX="$APP_ID_SUFFIX"
+
+      - name: Rename APK
+        run: |
+          set -euxo pipefail
+          cd android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug
+          mv app-debug.apk "$APK_BASENAME.apk"
+          echo "✅ Renamed APK to $APK_BASENAME.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK_BASENAME }}
+          path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/${{ env.APK_BASENAME }}.apk
