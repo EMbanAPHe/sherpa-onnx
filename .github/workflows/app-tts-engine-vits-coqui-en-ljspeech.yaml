@@ -6,7 +6,7 @@ on:
 jobs:
   build-tts-engine:
     runs-on: ubuntu-latest
-     env:
+    env:
       MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-coqui-en-ljspeech.tar.bz2"
       MODEL_DIR_NAME: "vits-coqui-en-ljspeech"
       MODEL_FILE_NAME: "model.onnx"
