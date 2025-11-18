@@ -11,7 +11,7 @@ jobs:
       MODEL_DIR_NAME: "vits-piper-en_US-ljspeech-medium"
       MODEL_FILE_NAME: "en_US-ljspeech-medium.onnx"
 
-      APP_ID_SUFFIX: ".vits-piper-en_US-ljspeech-medium"
+      APP_ID_SUFFIX: ".vits_piper_en_US_ljspeech_medium"
       APP_NAME: "TTS_Piper_US_LJS_medium"
       APK_BASENAME: "SherpaTtsEngine-Piper-en_US-ljspeech-medium"
 
