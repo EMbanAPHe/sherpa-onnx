@@ -12,7 +12,7 @@ jobs:
       MODEL_FILE_NAME: "en_US-ljspeech-high.onnx"
 
       APP_ID_SUFFIX: ".vits-piper-en_US-ljspeech-high"
-      APP_NAME: "TTS: Piper en_US LJS high"
+      APP_NAME: "Piper en_US LJS high TTS"
       APK_BASENAME: "SherpaTtsEngine-Piper-en_US-ljspeech-high"
 
     steps:
