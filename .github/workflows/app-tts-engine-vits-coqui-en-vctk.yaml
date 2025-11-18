@@ -11,7 +11,7 @@ jobs:
       MODEL_DIR_NAME: "vits-coqui-en-vctk"
 
       APP_ID_SUFFIX: ".vits_coqui_en_vctk"
-      APP_NAME: "TTS: VITS Coqui EN VCTK"
+      APP_NAME: "VITS Coqui EN VCTK TTS"
       APK_BASENAME: "SherpaTtsEngine-VITS-Coqui-EN-VCTK"
 
     steps:
