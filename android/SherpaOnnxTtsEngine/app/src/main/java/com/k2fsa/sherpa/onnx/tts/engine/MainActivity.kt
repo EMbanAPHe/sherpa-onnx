@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.getValue
@@ -89,7 +91,6 @@ class MainActivity : ComponentActivity() {
                         TopAppBar(title = { Text("Next-gen Kaldi: TTS Engine") })
                     }) {
                         Box(modifier = Modifier.padding(it)) {
-                            Column(modifier = Modifier.padding(16.dp)) {
                                 Column {
                                     Text("Speed " + String.format("%.1f", TtsEngine.speed))
                                     Slider(
@@ -101,6 +102,24 @@ class MainActivity : ComponentActivity() {
                                         valueRange = 0.2F..3.0F,
                                         modifier = Modifier.fillMaxWidth()
                                     )
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 8.dp)
+                                    ) {
+                                        Text(
+                                            "Allow system setting speed/pitch",
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Switch(
+                                            checked = TtsEngine.useSystemRatePitchState.value,
+                                            onCheckedChange = { checked ->
+                                                TtsEngine.useSystemRatePitch = checked
+                                                preferenceHelper.setUseSystemRatePitch(checked)
+                                            }
+                                        )
+                                    }
                                 }
 
                                 val testTextContent = getSampleText(TtsEngine.lang ?: "")
