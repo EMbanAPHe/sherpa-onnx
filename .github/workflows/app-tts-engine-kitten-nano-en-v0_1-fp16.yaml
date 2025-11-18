@@ -12,7 +12,7 @@ jobs:
       MODEL_FILE_NAME: "model.fp16.onnx"
 
       APP_ID_SUFFIX: ".kitten-nano-en-v0_1-fp16"
-      APP_NAME: "TTS: Kitten nano v0.1"
+      APP_NAME: "Kitten nano v0.1 TTS"
       APK_BASENAME: "SherpaTtsEngine-Kitten-nano-en-v0_1-fp16"
 
     steps:
