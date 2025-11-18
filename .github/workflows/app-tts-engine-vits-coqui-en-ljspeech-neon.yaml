@@ -6,6 +6,7 @@ on:
 jobs:
   build-tts-engine:
     runs-on: ubuntu-latest
+    env:
       MODEL_ARCHIVE_URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-coqui-en-ljspeech-neon.tar.bz2"
       MODEL_DIR_NAME: "vits-coqui-en-ljspeech-neon"
       MODEL_FILE_NAME: "model.onnx"
@@ -62,7 +63,7 @@ jobs:
              android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/
 
       # 2) Download & unpack Kokoro model into assets
-      - name: Add vits-coqui-en-ljspeech model to assets
+      - name: Add vits-coqui-en-ljspeech-neon model to assets
         shell: bash
         run: |
           set -euxo pipefail
