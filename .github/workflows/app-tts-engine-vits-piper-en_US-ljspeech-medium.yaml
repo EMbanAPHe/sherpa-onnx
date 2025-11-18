@@ -12,7 +12,7 @@ jobs:
       MODEL_FILE_NAME: "en_US-ljspeech-medium.onnx"
 
       APP_ID_SUFFIX: ".vits-piper-en_US-ljspeech-medium"
-      APP_NAME: "TTS: Piper en_US LJS medium"
+      APP_NAME: "Piper en_US LJS medium TTS"
       APK_BASENAME: "SherpaTtsEngine-Piper-en_US-ljspeech-medium"
 
     steps:
