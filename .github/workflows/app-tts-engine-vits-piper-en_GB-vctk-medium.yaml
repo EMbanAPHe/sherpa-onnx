@@ -12,7 +12,7 @@ jobs:
       MODEL_FILE_NAME: "en_GB-vctk-medium.onnx"
 
       APP_ID_SUFFIX: ".vits-piper-en_GB-vctk-medium"
-      APP_NAME: "TTS: Piper en_GB VCTK medium"
+      APP_NAME: "Piper en_GB VCTK medium TTS"
       APK_BASENAME: "SherpaTtsEngine-Piper-en_GB-vctk-medium"
 
     steps:
