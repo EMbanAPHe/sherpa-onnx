@@ -13,7 +13,7 @@ jobs:
 
       # Packaging bits (for side-by-side install)
       APP_ID_SUFFIX: ".kokoro_en_v019"
-      APP_NAME: "Kokoro EN v0_19 TTS"
+      APP_NAME: "TTS_Kokoro_EN_v0_19_TTS"
       APK_BASENAME: "SherpaTtsEngine-Kokoro-EN-v0_19"
 
     steps:
