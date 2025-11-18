@@ -79,7 +79,7 @@ jobs:
           echo "Extracted to $(pwd)/$MODEL_DIR_NAME"
 
       # 3) Patch TtsEngine.kt to set VITS defaults at initTts()
-      - name: Patch TtsEngine.kt for VITS Coqui EN VCTK defaults
+      - name: Patch TtsEngine.kt for VITS Piper EN_GB VCTK defaults
         shell: bash
         run: |
           set -euxo pipefail
@@ -88,13 +88,12 @@ jobs:
           grep -n "fun initTts" "$FILE"
 
           sed -i '/fun initTts\s*(context: .*).*{\s*$/a\
-              // Auto-guard for VITS Coqui EN VCTK (injected by CI)\n\
-              if (modelDir == null)  modelDir  = "'"$MODEL_DIR_NAME"'";\n\
-              if (modelName == null) modelName = "'"$MODEL_FILE_NAME"'";\n\
+              // Auto-guard for VITS Piper EN_GB VCTK (injected by CI)\n\
+              if (modelDir == null)  modelDir  = "vits-piper-en_GB-vctk-medium";\n\
+              if (modelName == null) modelName = "en_GB-vctk-medium.onnx";\n\
               if (lang == null)      lang      = "eng";\n\
-              if (dataDir == null)   dataDir   = "'"$MODEL_DIR_NAME"'/espeak-ng-data";\n'
-
-
+              if (dataDir == null)   dataDir   = "vits-piper-en_GB-vctk-medium/espeak-ng-data";\n' "$FILE"
+          
           echo "✅ initTts() guards injected"
 
       # 4) Patch TtsService.kt onGetLanguage to be null-safe
