@@ -90,8 +90,7 @@ class MainActivity : ComponentActivity() {
                     Scaffold(topBar = {
                         TopAppBar(title = { Text("Next-gen Kaldi: TTS Engine") })
                     }) {
-                        Box(modifier = Modifier.padding(it)) {
-                                Column {
+                        Column(modifier = Modifier.padding(it)) {
                                     Text("Speed " + String.format("%.1f", TtsEngine.speed))
                                     Slider(
                                         value = TtsEngine.speedState.value,
@@ -120,7 +119,6 @@ class MainActivity : ComponentActivity() {
                                             }
                                         )
                                     }
-                                }
 
                                 val testTextContent = getSampleText(TtsEngine.lang ?: "")
 
