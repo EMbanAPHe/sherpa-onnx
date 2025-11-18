@@ -1,4 +1,4 @@
-name: app-tts-engine-kokoro-en-v019
+name: app-tts-engine-kokoro-int8-en-v019
 
 on:
   workflow_dispatch:
