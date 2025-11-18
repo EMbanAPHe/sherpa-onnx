@@ -11,7 +11,7 @@ jobs:
       MODEL_DIR_NAME: "vits-piper-en_GB-vctk-medium"
       MODEL_FILE_NAME: "en_GB-vctk-medium.onnx"
 
-      APP_ID_SUFFIX: ".vits-piper-en_GB-vctk-medium"
+      APP_ID_SUFFIX: ".vits_piper_en_GB_vctk_medium"
       APP_NAME: "TTS_Piper_GB_VCTK_medium"
       APK_BASENAME: "SherpaTtsEngine-Piper-en_GB-vctk-medium"
 
