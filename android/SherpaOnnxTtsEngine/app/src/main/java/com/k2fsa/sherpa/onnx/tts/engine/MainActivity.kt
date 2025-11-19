@@ -45,7 +45,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import android.content.Intent
-import android.provider.Settings
 import com.k2fsa.sherpa.onnx.tts.engine.ui.theme.SherpaOnnxTtsEngineTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -99,7 +98,7 @@ class MainActivity : ComponentActivity() {
                                     onClick = {
                                         try {
                                             context.startActivity(
-                                                Intent(Settings.ACTION_TEXT_TO_SPEECH_SETTINGS)
+                                                Intent("com.android.settings.TTS_SETTINGS")
                                             )
                                         } catch (e: Exception) {
                                             Log.e(TAG, "Unable to open system TTS settings", e)
