@@ -61,7 +61,25 @@ class TtsService : TextToSpeechService() {
     private val tmpPcm16 = ThreadLocal.withInitial { ByteArray(256 * 1024) } // 256 KB scratch buffer
 
     private fun floatToPcm16InPlace(
-// --- Streaming infra: generator thread + queue ---
+        src: FloatArray,
+        srcOffset: Int,
+        dst: ByteArray,
+        dstOffset: Int,
+        frames: Int,
+    ) {
+        var j = dstOffset
+        var i = srcOffset
+        val end = srcOffset + frames
+        while (i < end) {
+            val s = (src[i] * 32767.0f).toInt().coerceIn(-32768, 32767)
+            dst[j] = (s and 0xff).toByte()
+            dst[j + 1] = ((s ushr 8) and 0xff).toByte()
+            i += 1
+            j += 2
+        }
+    }
+
+    // --- Streaming infra: generator thread + queue ---
     private sealed class QueueItem {
         data class Data(val bytes: ByteArray, val length: Int) : QueueItem()
         object End : QueueItem()
@@ -74,7 +92,7 @@ class TtsService : TextToSpeechService() {
     @Volatile
     private var currentGeneratorThread: Thread? = null
 
-// --- End patch ---
+    // --- End patch ---
 
     override fun onCreate() {
         Log.i(TAG, "onCreate tts service")
@@ -142,9 +160,7 @@ class TtsService : TextToSpeechService() {
         }
     }
 
-    override fun onStop() {}
-
-override fun onStop() {
+    override fun onStop() {
         Log.i(TAG, "onStop()")
         val cancelled = currentCancelled
         cancelled?.set(true)
