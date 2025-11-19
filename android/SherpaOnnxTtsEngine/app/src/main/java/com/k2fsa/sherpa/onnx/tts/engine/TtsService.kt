@@ -86,70 +86,6 @@ class TtsService : TextToSpeechService() {
         data class Error(val t: Throwable) : QueueItem()
     }
 
-    // --- Silence compression between sentences ---
-    private class SilenceTrimmer(
-        private val sampleRate: Int,
-        private val amplitudeThreshold: Int = 700, // treat quieter-than-this as "silence"
-        private val keepMs: Int = 300             // keep up to 300ms of any silent run
-    ) {
-        // Number of samples to keep in each continuous silence region
-        private val keepSamples: Int =
-            ((sampleRate.toLong() * keepMs) / 1000L).toInt().coerceAtLeast(1)
-
-        private var consecutiveSilentSamples: Int = 0
-
-        /**
-         * Filter the given PCM16 audio in-place, returning a trimmed copy.
-         *
-         * @param input raw PCM16 little-endian data
-         * @param length number of valid bytes in [input]
-         * @return new ByteArray with trimmed audio, or null if everything was dropped
-         */
-        fun filter(input: ByteArray, length: Int): ByteArray? {
-            if (length <= 0) return null
-
-            // Worst case output is same size as input
-            val out = ByteArray(length)
-            var outPos = 0
-
-            var i = 0
-            // Step two bytes at a time (one 16-bit sample)
-            while (i + 1 < length) {
-                val lo = input[i].toInt() and 0xff
-                val hi = input[i + 1].toInt()   // sign-extended
-                val sample = (hi shl 8) or lo   // signed 16-bit
-                val absSample = if (sample < 0) -sample else sample
-
-                val isSilent = absSample < amplitudeThreshold
-                val keepSample: Boolean
-
-                if (isSilent) {
-                    consecutiveSilentSamples++
-                    // Only keep the first [keepSamples] samples of this silent run
-                    keepSample = consecutiveSilentSamples <= keepSamples
-                } else {
-                    // Speech / non-silence: always keep and reset silence counter
-                    consecutiveSilentSamples = 0
-                    keepSample = true
-                }
-
-                if (keepSample) {
-                    out[outPos] = input[i]
-                    out[outPos + 1] = input[i + 1]
-                    outPos += 2
-                }
-
-                i += 2
-            }
-
-            return if (outPos == 0) {
-                null
-            } else {
-                out.copyOf(outPos)
-            }
-        }
-    }
-
     @Volatile
     private var currentCancelled: AtomicBoolean? = null
 
@@ -287,9 +223,6 @@ class TtsService : TextToSpeechService() {
         val queue = LinkedBlockingQueue<QueueItem>(32)
         val cancelled = AtomicBoolean(false)
         currentCancelled = cancelled
-        
-        // New: stateful trimmer for this utterance
-        val silenceTrimmer = SilenceTrimmer(sampleRate)
 
         // Generator thread that runs Kokoro and converts float -> PCM16
         val generatorThread = Thread {
@@ -318,15 +251,8 @@ class TtsService : TextToSpeechService() {
                             frames = frames,
                         )
 
-                        // Trim long silent runs
-                        val filtered = silenceTrimmer.filter(pcmBytes, pcmBytes.size)
-                        if (filtered == null || filtered.isEmpty()) {
-                            // Entire chunk was dropped as excess silence
-                            return@generateStreaming 1
-                        }
-
                         try {
-                            queue.put(QueueItem.Data(filtered, filtered.size))
+                            queue.put(QueueItem.Data(pcmBytes, pcmBytes.size))
                         } catch (ie: InterruptedException) {
                             if (cancelled.get()) {
                                 return@generateStreaming 0
