@@ -7,6 +7,8 @@ import android.speech.tts.SynthesisRequest
 import android.speech.tts.TextToSpeech
 import android.speech.tts.TextToSpeechService
 import android.util.Log
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 /*
 https://developer.android.com/reference/java/util/Locale#getISO3Language()
@@ -59,23 +61,18 @@ class TtsService : TextToSpeechService() {
     private val tmpPcm16 = ThreadLocal.withInitial { ByteArray(256 * 1024) } // 256 KB scratch buffer
 
     private fun floatToPcm16InPlace(
-    src: FloatArray,
-    srcOffset: Int,
-    dst: ByteArray,
-    dstOffset: Int,
-    frames: Int,
-) {
-    var j = dstOffset
-    var i = srcOffset
-    val end = srcOffset + frames
-    while (i < end) {
-        val s = (src[i] * 32767.0f).toInt().coerceIn(-32768, 32767)
-        dst[j] = (s and 0xff).toByte()
-        dst[j + 1] = ((s ushr 8) and 0xff).toByte()
-        i += 1
-        j += 2
+// --- Streaming infra: generator thread + queue ---
+    private sealed class QueueItem {
+        data class Data(val bytes: ByteArray, val length: Int) : QueueItem()
+        object End : QueueItem()
+        data class Error(val t: Throwable) : QueueItem()
     }
-}
+
+    @Volatile
+    private var currentCancelled: AtomicBoolean? = null
+
+    @Volatile
+    private var currentGeneratorThread: Thread? = null
 
 // --- End patch ---
 
@@ -147,10 +144,18 @@ class TtsService : TextToSpeechService() {
 
     override fun onStop() {}
 
+override fun onStop() {
+        Log.i(TAG, "onStop()")
+        val cancelled = currentCancelled
+        cancelled?.set(true)
+        currentGeneratorThread?.interrupt()
+    }
+
     override fun onSynthesizeText(request: SynthesisRequest?, callback: SynthesisCallback?) {
         if (request == null || callback == null) {
             return
         }
+
         val language = request.language
         val country = request.country
         val variant = request.variant
@@ -161,7 +166,9 @@ class TtsService : TextToSpeechService() {
             callback.error()
             return
         }
+
         Log.i(TAG, "text: $text")
+
         val tts = TtsEngine.tts ?: run {
             // Try to initialize if it hasn't been created yet
             TtsEngine.createTts(applicationContext)
@@ -176,41 +183,13 @@ class TtsService : TextToSpeechService() {
             }
         }
 
-        // Note that AudioFormat.ENCODING_PCM_FLOAT requires API level >= 24
-        // callback.start(tts.sampleRate(), AudioFormat.ENCODING_PCM_FLOAT, 1)
+        val sampleRate = tts.sampleRate()
+        callback.start(sampleRate, AudioFormat.ENCODING_PCM_16BIT, 1)
 
-        callback.start(tts.sampleRate(), AudioFormat.ENCODING_PCM_16BIT, 1)
-
-        if (text.isBlank() || text.isEmpty()) {
+        if (text.isBlank()) {
             callback.done()
             return
         }
-
-        val ttsCallback: (FloatArray) -> Int = fun(chunk: FloatArray): Int {
-    val scratch = tmpPcm16.get()
-    val maxBytes = callback.maxBufferSize.coerceAtLeast(4096)
-
-    var srcOff = 0
-    val totalFrames = chunk.size
-    val maxFramesPerWrite = (maxBytes / 2).coerceAtMost(scratch.size / 2)
-
-    while (srcOff < totalFrames) {
-        val framesThis = minOf(maxFramesPerWrite, totalFrames - srcOff)
-
-        floatToPcm16InPlace(
-            src = chunk,
-            srcOffset = srcOff,
-            dst = scratch,
-            dstOffset = 0,
-            frames = framesThis,
-        )
-
-        callback.audioAvailable(scratch, 0, framesThis * 2)
-        srcOff += framesThis
-    }
-    return 1
-}
-
 
         val effectiveSpeed = if (TtsEngine.useSystemRatePitch) {
             val sysRate = request.speechRate    // 100 = normal
@@ -221,19 +200,111 @@ class TtsService : TextToSpeechService() {
 
         Log.i(
             TAG,
-            "text: $text, effectiveSpeed=$effectiveSpeed, sysRate=${request.speechRate}, useSystem=${TtsEngine.useSystemRatePitch}"
+            "text: $text, effectiveSpeed=$effectiveSpeed, speechRate=${request.speechRate}, useSystem=${TtsEngine.useSystemRatePitch}"
         )
 
-        tts.generateStreaming(
-            text = text,
-            sid = TtsEngine.speakerId,
-            speed = effectiveSpeed,
-            callback = ttsCallback,
-        )
+        // Set up streaming infrastructure
+        val queue = LinkedBlockingQueue<QueueItem>(32)
+        val cancelled = AtomicBoolean(false)
+        currentCancelled = cancelled
 
-        callback.done()
+        // Generator thread that runs Kokoro and converts float -> PCM16
+        val generatorThread = Thread {
+            try {
+                tts.generateStreaming(
+                    text = text,
+                    sid = TtsEngine.speakerId,
+                    speed = effectiveSpeed,
+                    callback = { floatChunk ->
+                        if (cancelled.get()) {
+                            return@generateStreaming 0
+                        }
+
+                        val frames = floatChunk.size
+                        if (frames == 0) {
+                            return@generateStreaming 1
+                        }
+
+                        // One PCM16 buffer per chunk
+                        val pcmBytes = ByteArray(frames * 2)
+                        floatToPcm16InPlace(
+                            src = floatChunk,
+                            srcOffset = 0,
+                            dst = pcmBytes,
+                            dstOffset = 0,
+                            frames = frames,
+                        )
+
+                        try {
+                            // Blocks until space is available or thread is interrupted
+                            queue.put(QueueItem.Data(pcmBytes, pcmBytes.size))
+                        } catch (ie: InterruptedException) {
+                            if (cancelled.get()) {
+                                return@generateStreaming 0
+                            } else {
+                                queue.offer(QueueItem.Error(ie))
+                                return@generateStreaming 0
+                            }
+                        }
+
+                        if (cancelled.get()) {
+                            return@generateStreaming 0
+                        }
+
+                        1
+                    }
+                )
+
+                if (!cancelled.get()) {
+                    queue.offer(QueueItem.End)
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Error in generateStreaming", t)
+                queue.offer(QueueItem.Error(t))
+            }
+        }.apply {
+            name = "SherpaTtsGenerator"
+            isDaemon = true
+        }
+
+        currentGeneratorThread = generatorThread
+        generatorThread.start()
+
+        try {
+            while (true) {
+                val item = queue.take()
+                when (item) {
+                    is QueueItem.Data -> {
+                        if (cancelled.get()) {
+                            break
+                        }
+                        // Synthesis thread, inside onSynthesizeText – this is allowed
+                        callback.audioAvailable(item.bytes, 0, item.length)
+                    }
+                    is QueueItem.End -> {
+                        // Normal EOS
+                        break
+                    }
+                    is QueueItem.Error -> {
+                        Log.e(TAG, "Generator thread error", item.t)
+                        callback.error(TextToSpeech.ERROR_OUTPUT)
+                        cancelled.set(true)
+                        break
+                    }
+                }
+            }
+
+            if (!cancelled.get()) {
+                callback.done()
+            }
+        } catch (e: InterruptedException) {
+            Log.w(TAG, "onSynthesizeText interrupted", e)
+            cancelled.set(true)
+        } finally {
+            cancelled.set(true)
+            currentGeneratorThread = null
+        }
     }
-
 
     private fun floatArrayToByteArray(audio: FloatArray): ByteArray {
         // byteArray is actually a ShortArray
