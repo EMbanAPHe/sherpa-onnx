@@ -219,7 +219,5 @@ object TtsEngine {
         }
     }
 
-    private companion object {
-        private const val TAG = "TtsEngine"
-    }
+    private const val TAG = "TtsEngine"
 }

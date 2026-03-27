@@ -31,7 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -167,7 +167,7 @@ class MainActivity : ComponentActivity() {
                                 }
 
                                 Spacer(Modifier.height(12.dp))
-                                HorizontalDivider()
+                                Divider()
                                 Spacer(Modifier.height(12.dp))
 
                                 // ── Performance settings ──────────────────────
@@ -313,7 +313,7 @@ class MainActivity : ComponentActivity() {
                                 )
 
                                 Spacer(Modifier.height(12.dp))
-                                HorizontalDivider()
+                                Divider()
                                 Spacer(Modifier.height(12.dp))
 
                                 // ── Speaker ID (multi-speaker models only) ─────
