@@ -16,9 +16,9 @@ import java.io.IOException
 
 const val MIN_TTS_SPEED = 0.2f
 const val MAX_TTS_SPEED = 3.0f
-private const val TAG = "TtsEngine"
-
 object TtsEngine {
+    private const val TAG = "TtsEngine"
+
     // The OfflineTts instance. TtsService captures a local reference at the
     // start of each synthesis call, so setting this to null mid-synthesis is
     // safe — the ongoing call completes with the old instance, and the next
