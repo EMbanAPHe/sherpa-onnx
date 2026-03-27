@@ -11,98 +11,41 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
 /*
-https://developer.android.com/reference/java/util/Locale#getISO3Language()
-https://developer.android.com/reference/java/util/Locale#getISO3Country()
-
-eng, USA,
-eng, USA, POSIX
-eng,
-eng, GBR
-afr,
-afr, NAM
-afr, ZAF
-agq
-agq, CMR
-aka,
-aka, GHA
-amh,
-amh, ETH
-ara,
-ara, 001
-ara, ARE
-ara, BHR,
-deu
-deu, AUT
-deu, BEL
-deu, CHE
-deu, ITA
-deu, ITA
-deu, LIE
-deu, LUX
-spa,
-spa, 419
-spa, ARG,
-spa, BRA
-fra,
-fra, BEL,
-fra, FRA,
-
-E  Failed to check TTS data, no activity found for Intent
-{ act=android.speech.tts.engine.CHECK_TTS_DATA pkg=com.k2fsa.sherpa.chapter5 })
-
-E Failed to get default language from engine com.k2fsa.sherpa.chapter5
-Engine failed voice data integrity check (null return)com.k2fsa.sherpa.chapter5
-Failed to get default language from engine com.k2fsa.sherpa.chapter5
-
-*/
+ * Language codes Android TTS sends (ISO 639-3 / ISO 3166-1 alpha-3):
+ *   eng, USA  |  eng, GBR  |  deu  |  fra  |  ...
+ *
+ * This service works by overlapping inference with playback:
+ *   - The synthesis callback fires once per sentence (Kokoro's internal batching).
+ *   - Each sentence's PCM16 bytes are placed on a bounded queue.
+ *   - The synthesis thread keeps running the NEXT sentence while the consumer
+ *     thread drains audio bytes to Android's callback.audioAvailable().
+ *
+ * This reduces the audible gap between sentences because sentence N+1 is being
+ * inferred while sentence N is being played.
+ *
+ * NOTE: We use generateWithCallback (available in sherpa-onnx v1.12.15 JitPack AAR).
+ *       The fork's generateStreaming was removed because it referenced a JNI function
+ *       that is never present in the published AAR — it would crash at runtime.
+ */
 
 class TtsService : TextToSpeechService() {
-    // --- Performance patch: reduce GC and sentence gap ---
-    private val tmpPcm16 = ThreadLocal.withInitial { ByteArray(256 * 1024) } // 256 KB scratch buffer
 
-    private fun floatToPcm16InPlace(
-        src: FloatArray,
-        srcOffset: Int,
-        dst: ByteArray,
-        dstOffset: Int,
-        frames: Int,
-    ) {
-        var j = dstOffset
-        var i = srcOffset
-        val end = srcOffset + frames
-        while (i < end) {
-            val s = (src[i] * 32767.0f).toInt().coerceIn(-32768, 32767)
-            dst[j] = (s and 0xff).toByte()
-            dst[j + 1] = ((s ushr 8) and 0xff).toByte()
-            i += 1
-            j += 2
-        }
-    }
-
-    // --- Streaming infra: generator thread + queue ---
+    // Streaming infra — shared across the generator callback and the consumer loop
     private sealed class QueueItem {
-        data class Data(val bytes: ByteArray, val length: Int) : QueueItem()
+        class Data(val bytes: ByteArray, val length: Int) : QueueItem()
         object End : QueueItem()
-        data class Error(val t: Throwable) : QueueItem()
+        class Error(val t: Throwable) : QueueItem()
     }
 
-    @Volatile
-    private var currentCancelled: AtomicBoolean? = null
+    @Volatile private var currentCancelled: AtomicBoolean? = null
+    @Volatile private var currentQueue: LinkedBlockingQueue<QueueItem>? = null
 
-    @Volatile
-    private var currentGeneratorThread: Thread? = null
-
-    // --- End patch ---
-
+    // ────────────────────────────────────────────────────────────────────────
     override fun onCreate() {
         Log.i(TAG, "onCreate tts service")
         super.onCreate()
-
-        // see https://github.com/Miserlou/Android-SDK-Samples/blob/master/TtsEngine/src/com/example/android/ttsengine/RobotSpeakTtsService.java#L68
         onLoadLanguage(TtsEngine.lang, "", "")
-        if (TtsEngine.lang2 != null) {
-            onLoadLanguage(TtsEngine.lang2, "", "")
-        }
+        if (TtsEngine.lang2 != null) onLoadLanguage(TtsEngine.lang2, "", "")
     }
 
     override fun onDestroy() {
@@ -110,92 +53,78 @@ class TtsService : TextToSpeechService() {
         super.onDestroy()
     }
 
-    // https://developer.android.com/reference/kotlin/android/speech/tts/TextToSpeechService#onislanguageavailable
     override fun onIsLanguageAvailable(
-        _lang: String?,
-        _country: String?,
-        _variant: String?
+        _lang: String?, _country: String?, _variant: String?
     ): Int {
         val requested = _lang ?: ""
+        val primary   = TtsEngine.lang ?: "eng"
 
-        // Your primary engine language – provide a fallback if not set yet
-        val primary = TtsEngine.lang ?: "eng" // or "en"
-
-        // Normalize common variants Android might send
-        val normalized = when {
+        // Normalise: Android may send "en", "eng", "en-US", "en_US", etc.
+        val normalised = when {
             requested.equals("eng", ignoreCase = true) -> "eng"
-            // Treat any "en", "en-AU", "en_US", etc. as primary
             requested.startsWith("en", ignoreCase = true) -> primary
             else -> requested
         }
 
-        return if (
-            normalized.equals(primary, ignoreCase = true) ||
-            (TtsEngine.lang2 != null && normalized.equals(TtsEngine.lang2, ignoreCase = true))
-        ) {
+        return if (normalised.equals(primary, ignoreCase = true) ||
+                   (TtsEngine.lang2 != null &&
+                    normalised.equals(TtsEngine.lang2, ignoreCase = true)))
             TextToSpeech.LANG_AVAILABLE
-        } else {
+        else
             TextToSpeech.LANG_NOT_SUPPORTED
-        }
     }
 
-    override fun onGetLanguage(): Array<String> {
-        // Fallback if lang hasn't been initialized yet
-        val lang = TtsEngine.lang ?: "eng" // or "en" if you prefer the 2-letter form
-        return arrayOf(lang, "", "")
-    }
+    override fun onGetLanguage(): Array<String> =
+        arrayOf(TtsEngine.lang ?: "eng", "", "")
 
-    // https://developer.android.com/reference/kotlin/android/speech/tts/TextToSpeechService#onLoadLanguage(kotlin.String,%20kotlin.String,%20kotlin.String)
-    override fun onLoadLanguage(_lang: String?, _country: String?, _variant: String?): Int {
+    override fun onLoadLanguage(
+        _lang: String?, _country: String?, _variant: String?
+    ): Int {
         Log.i(TAG, "onLoadLanguage: $_lang, $_country")
         val lang = _lang ?: ""
-
         return if (lang == TtsEngine.lang || lang == TtsEngine.lang2) {
-            Log.i(TAG, "creating tts, lang :$lang")
+            Log.i(TAG, "creating tts for lang: $lang")
             TtsEngine.createTts(application)
             TextToSpeech.LANG_AVAILABLE
         } else {
-            Log.i(TAG, "lang $lang not supported, tts engine lang: ${TtsEngine.lang}, ${TtsEngine.lang2}")
+            Log.i(TAG, "lang $lang not supported; engine: ${TtsEngine.lang}, ${TtsEngine.lang2}")
             TextToSpeech.LANG_NOT_SUPPORTED
         }
     }
 
     override fun onStop() {
         Log.i(TAG, "onStop()")
-        val cancelled = currentCancelled
-        cancelled?.set(true)
-        currentGeneratorThread?.interrupt()
+        // Signal the generator callback to return 0 (stop)
+        currentCancelled?.set(true)
+        // Drain the queue so the consumer loop unblocks and exits
+        currentQueue?.let { q ->
+            q.clear()
+            q.offer(QueueItem.End)   // wake up any blocking take()
+        }
     }
 
+    // ────────────────────────────────────────────────────────────────────────
     override fun onSynthesizeText(request: SynthesisRequest?, callback: SynthesisCallback?) {
-        if (request == null || callback == null) {
-            return
-        }
+        if (request == null || callback == null) return
 
         val language = request.language
-        val country = request.country
-        val variant = request.variant
-        val text = request.charSequenceText.toString()
+        val country  = request.country
+        val variant  = request.variant
+        val text     = request.charSequenceText.toString()
 
-        val ret = onIsLanguageAvailable(language, country, variant)
-        if (ret == TextToSpeech.LANG_NOT_SUPPORTED) {
+        if (onIsLanguageAvailable(language, country, variant) == TextToSpeech.LANG_NOT_SUPPORTED) {
             callback.error()
             return
         }
 
-        Log.i(TAG, "text: $text")
+        Log.i(TAG, "onSynthesizeText: \"$text\"")
 
+        // Lazily initialise TTS if not already done
         val tts = TtsEngine.tts ?: run {
-            // Try to initialize if it hasn't been created yet
             TtsEngine.createTts(applicationContext)
-
-            val created = TtsEngine.tts
-            if (created == null) {
-                // If we still don't have a TTS instance, fail this request gracefully
+            TtsEngine.tts ?: run {
                 callback.error()
                 return
-            } else {
-                created
             }
         }
 
@@ -207,125 +136,91 @@ class TtsService : TextToSpeechService() {
             return
         }
 
+        // Effective speed: honour the "allow system rate/pitch" toggle
         val effectiveSpeed = if (TtsEngine.useSystemRatePitch) {
-            val sysRate = request.speechRate    // 100 = normal
-            (sysRate / 100.0f).coerceIn(0.2f, 3.0f)
+            (request.speechRate / 100.0f).coerceIn(0.2f, 3.0f)
         } else {
             TtsEngine.speed
         }
 
-        Log.i(
-            TAG,
-            "text: $text, effectiveSpeed=$effectiveSpeed, speechRate=${request.speechRate}, useSystem=${TtsEngine.useSystemRatePitch}"
-        )
+        Log.i(TAG, "speed=$effectiveSpeed useSystem=${TtsEngine.useSystemRatePitch}")
 
-        // Set up streaming infrastructure
-        val queue = LinkedBlockingQueue<QueueItem>(32)
+        // Per-request cancel flag and bounded queue (32 sentences ≈ several paragraphs)
         val cancelled = AtomicBoolean(false)
+        val queue     = LinkedBlockingQueue<QueueItem>(32)
         currentCancelled = cancelled
+        currentQueue     = queue
 
-        // Generator thread that runs Kokoro and converts float -> PCM16
+        // ── Generator: runs inside the sherpa-onnx callback (called once per sentence)
+        // generateWithCallback IS present in the stock v1.12.15 JitPack AAR.
+        // It fires the callback after each sentence's inference completes, then
+        // accumulates all samples into the returned GeneratedAudio (which we ignore).
         val generatorThread = Thread {
             try {
-                tts.generateStreaming(
-                    text = text,
-                    sid = TtsEngine.speakerId,
-                    speed = effectiveSpeed,
-                    callback = { floatChunk ->
-                        if (cancelled.get()) {
-                            return@generateStreaming 0
-                        }
+                tts.generateWithCallback(
+                    text     = text,
+                    sid      = TtsEngine.speakerId,
+                    speed    = effectiveSpeed,
+                ) { floatSamples ->
+                    if (cancelled.get()) return@generateWithCallback 0
 
-                        val frames = floatChunk.size
-                        if (frames == 0) {
-                            return@generateStreaming 1
-                        }
+                    val frames = floatSamples.size
+                    if (frames == 0) return@generateWithCallback 1
 
-                        // Convert float samples to PCM16
-                        val pcmBytes = ByteArray(frames * 2)
-                        floatToPcm16InPlace(
-                            src = floatChunk,
-                            srcOffset = 0,
-                            dst = pcmBytes,
-                            dstOffset = 0,
-                            frames = frames,
-                        )
-
-                        try {
-                            queue.put(QueueItem.Data(pcmBytes, pcmBytes.size))
-                        } catch (ie: InterruptedException) {
-                            if (cancelled.get()) {
-                                return@generateStreaming 0
-                            } else {
-                                queue.offer(QueueItem.Error(ie))
-                                return@generateStreaming 0
-                            }
-                        }
-
-                        if (cancelled.get()) {
-                            return@generateStreaming 0
-                        }
-
-                        1
+                    // Convert float→PCM16 in-line (no separate heap allocation per call
+                    // beyond the required output ByteArray, which is unavoidable)
+                    val pcmBytes = ByteArray(frames * 2)
+                    var j = 0
+                    for (i in 0 until frames) {
+                        val s = (floatSamples[i] * 32767.0f).toInt().coerceIn(-32768, 32767)
+                        pcmBytes[j]     = (s and 0xff).toByte()
+                        pcmBytes[j + 1] = ((s ushr 8) and 0xff).toByte()
+                        j += 2
                     }
-                )
 
-                if (!cancelled.get()) {
-                    queue.offer(QueueItem.End)
+                    try {
+                        queue.put(QueueItem.Data(pcmBytes, pcmBytes.size))
+                    } catch (ie: InterruptedException) {
+                        return@generateWithCallback 0
+                    }
+
+                    if (cancelled.get()) 0 else 1
                 }
+
+                if (!cancelled.get()) queue.offer(QueueItem.End)
+
             } catch (t: Throwable) {
-                Log.e(TAG, "Error in generateStreaming", t)
+                Log.e(TAG, "Generator error", t)
                 queue.offer(QueueItem.Error(t))
             }
         }.apply {
-            name = "SherpaTtsGenerator"
+            name     = "SherpaTtsGenerator"
             isDaemon = true
         }
 
-        currentGeneratorThread = generatorThread
         generatorThread.start()
 
+        // ── Consumer: drains the queue into Android's audioAvailable()
         try {
             while (true) {
                 val item = queue.take()
                 when (item) {
+                    is QueueItem.End -> break
+
                     is QueueItem.Data -> {
-                        if (cancelled.get()) {
-                            break
-                        }
-
-                        val data = item.bytes
-                        val total = item.length
-                        if (total <= 0) {
-                            // Nothing to play in this chunk
-                            continue
-                        }
-
-                        // Respect Android's maximum buffer size. Fallback minimum for safety.
-                        val maxBytes = callback.maxBufferSize.coerceAtLeast(4096)
-
+                        if (cancelled.get()) break
+                        val maxBuf = callback.maxBufferSize.coerceAtLeast(4096)
                         var offset = 0
+                        val total  = item.length
                         while (offset < total && !cancelled.get()) {
-                            // Don't exceed maxBytes, and don't run past the end
-                            val remaining = total - offset
-                            var bytesThis = minOf(maxBytes, remaining)
-
-                            // Ensure we send a whole number of PCM16 frames (2 bytes per frame)
-                            if (bytesThis % 2 != 0) {
-                                bytesThis -= 1
-                            }
-                            if (bytesThis <= 0) {
-                                break
-                            }
-
-                            callback.audioAvailable(data, offset, bytesThis)
-                            offset += bytesThis
+                            var chunk = minOf(maxBuf, total - offset)
+                            if (chunk % 2 != 0) chunk--   // keep whole PCM16 frames
+                            if (chunk <= 0) break
+                            callback.audioAvailable(item.bytes, offset, chunk)
+                            offset += chunk
                         }
                     }
-                    is QueueItem.End -> {
-                        // Normal EOS
-                        break
-                    }
+
                     is QueueItem.Error -> {
                         Log.e(TAG, "Generator thread error", item.t)
                         callback.error(TextToSpeech.ERROR_OUTPUT)
@@ -334,30 +229,18 @@ class TtsService : TextToSpeechService() {
                     }
                 }
             }
+            if (!cancelled.get()) callback.done()
 
-            if (!cancelled.get()) {
-                callback.done()
-            }
         } catch (e: InterruptedException) {
-            Log.w(TAG, "onSynthesizeText interrupted", e)
+            Log.w(TAG, "Consumer interrupted", e)
             cancelled.set(true)
         } finally {
             cancelled.set(true)
-            currentGeneratorThread = null
+            currentCancelled = null
+            currentQueue     = null
         }
     }
 
-    private fun floatArrayToByteArray(audio: FloatArray): ByteArray {
-        // byteArray is actually a ShortArray
-        val byteArray = ByteArray(audio.size * 2)
-        for (i in audio.indices) {
-            val sample = (audio[i] * 32767).toInt()
-            byteArray[2 * i] = sample.toByte()
-            byteArray[2 * i + 1] = (sample shr 8).toByte()
-        }
-        return byteArray
-    }
-    
     companion object {
         private const val TAG = "TtsService"
     }

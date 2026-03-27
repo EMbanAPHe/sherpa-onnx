@@ -8,67 +8,52 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        // Base ID for TTS engine
         val baseId = "com.k2fsa.sherpa.onnx.tts.engine"
-
-        // Optional suffix passed as: ./gradlew ... -PAPP_ID_SUFFIX=".kokoro-int8-en-v0_19"
         val suffix = (project.findProperty("APP_ID_SUFFIX") as String?) ?: ""
-
         applicationId = baseId + suffix
 
-        minSdk = 21
+        minSdk    = 21
         targetSdk = 34
-        versionCode = 20250918
-        versionName = "1.12.15"
+        // FIX Issue 7: was 20250918 (regressed), now >= original 20260326
+        versionCode = 20260327
+        versionName = "1.12.15-fork"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        vectorDrawables {
-            useSupportLibrary = true
-        }
+        vectorDrawables { useSupportLibrary = true }
 
+        // FIX Issue 8: expose model config via BuildConfig instead of sed-patching Kotlin.
+        // CI workflows write TTSENGINE_* to gradle.properties; TtsEngine.kt reads BuildConfig.
+        fun prop(key: String): String = (project.findProperty(key) as String?) ?: ""
+        buildConfigField("String",  "TTSENGINE_MODEL_DIR",  "\"${prop("TTSENGINE_MODEL_DIR")}\"")
+        buildConfigField("String",  "TTSENGINE_MODEL_NAME", "\"${prop("TTSENGINE_MODEL_NAME")}\"")
+        buildConfigField("String",  "TTSENGINE_VOICES",     "\"${prop("TTSENGINE_VOICES")}\"")
+        buildConfigField("String",  "TTSENGINE_DATA_DIR",   "\"${prop("TTSENGINE_DATA_DIR")}\"")
+        buildConfigField("String",  "TTSENGINE_LANG",       "\"${prop("TTSENGINE_LANG")}\"")
+        buildConfigField("boolean", "TTSENGINE_IS_KITTEN",  "${prop("TTSENGINE_IS_KITTEN") == "true"}")
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
+    kotlinOptions { jvmTarget = "1.8" }
     buildFeatures {
-        compose = true
+        compose     = true
+        buildConfig = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.1"
-    }
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("src/main/jniLibs")
-        }
-    }
+    composeOptions { kotlinCompilerExtensionVersion = "1.5.1" }
+    packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
+    sourceSets { getByName("main") { jniLibs.srcDirs("src/main/jniLibs") } }
 }
 
 dependencies {
-
     implementation("com.github.k2-fsa:sherpa-onnx:v1.12.15")
-
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.2")
@@ -79,6 +64,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.9.0")
+    testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2023.08.00"))

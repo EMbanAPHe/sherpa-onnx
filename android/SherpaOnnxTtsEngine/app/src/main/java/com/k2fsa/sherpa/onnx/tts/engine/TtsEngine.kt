@@ -14,183 +14,118 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 
+const val MIN_TTS_SPEED = 0.2f
+const val MAX_TTS_SPEED = 3.0f
+
 object TtsEngine {
     var tts: OfflineTts? = null
 
-    // https://en.wikipedia.org/wiki/ISO_639-3
-    // Example:
-    // eng for English,
-    // deu for German
-    // cmn for Mandarin
-    var lang: String? = null
-
-    // if a model supports two languages, set also lang2
+    // ISO 639-3 language codes: eng, deu, zho, fra …
+    var lang:  String? = null
     var lang2: String? = null
 
-
-    val speedState: MutableState<Float> = mutableFloatStateOf(1.0F)
-    val speakerIdState: MutableState<Int> = mutableIntStateOf(0)
+    val speedState:              MutableState<Float>   = mutableFloatStateOf(1.0F)
+    val speakerIdState:          MutableState<Int>     = mutableIntStateOf(0)
     val useSystemRatePitchState: MutableState<Boolean> = mutableStateOf(false)
 
     var speed: Float
         get() = speedState.value
-        set(value) {
-            speedState.value = value
-        }
+        set(value) { speedState.value = value }
 
     var speakerId: Int
         get() = speakerIdState.value
-        set(value) {
-            speakerIdState.value = value
-        }
+        set(value) { speakerIdState.value = value }
 
     var useSystemRatePitch: Boolean
         get() = useSystemRatePitchState.value
-        set(value) {
-            useSystemRatePitchState.value = value
-        }
+        set(value) { useSystemRatePitchState.value = value }
 
-    private var modelDir: String? = null
-    private var modelName: String? = null
-    private var acousticModelName: String? = null // for matcha tts
-    private var vocoder: String? = null // for matcha tts
-    private var voices: String? = null // for kokoro
-    private var ruleFsts: String? = null
-    private var ruleFars: String? = null
-    private var lexicon: String? = null
-    private var dataDir: String? = null
-    private var assets: AssetManager? = null
-    private var isKitten = false
+    private var modelDir:          String? = null
+    private var modelName:         String? = null
+    private var acousticModelName: String? = null
+    private var vocoder:           String? = null
+    private var voices:            String? = null
+    private var ruleFsts:          String? = null
+    private var ruleFars:          String? = null
+    private var lexicon:           String? = null
+    private var dataDir:           String? = null
+    private var assets:            AssetManager? = null
+    private var isKitten           = false
 
     init {
-        // The purpose of such a design is to make the CI test easier
-        // Please see
-        // https://github.com/k2-fsa/sherpa-onnx/blob/master/scripts/apk/generate-tts-apk-script.py
+        // FIX (Issue 8): Read model config from BuildConfig fields, which are set
+        // by build.gradle.kts reading TTSENGINE_* from gradle.properties.
+        // CI workflows write gradle.properties before calling assembleDebug —
+        // no more fragile sed injection into this file.
         //
-        // For VITS -- begin
-        modelName = null
-        // For VITS -- end
+        // A non-empty BuildConfig.TTSENGINE_MODEL_DIR (or TTSENGINE_VOICES for Kokoro)
+        // activates the CI-injected model.  An empty value falls through to the
+        // commented-out examples below (useful for local dev builds).
 
-        // For Matcha -- begin
-        acousticModelName = null
-        vocoder = null
-        // For Matcha -- end
+        val bcModelDir  = BuildConfig.TTSENGINE_MODEL_DIR.trim()
+        val bcModelName = BuildConfig.TTSENGINE_MODEL_NAME.trim()
+        val bcVoices    = BuildConfig.TTSENGINE_VOICES.trim()
+        val bcDataDir   = BuildConfig.TTSENGINE_DATA_DIR.trim()
+        val bcLang      = BuildConfig.TTSENGINE_LANG.trim()
+        val bcIsKitten  = BuildConfig.TTSENGINE_IS_KITTEN
 
-        // For Kokoro -- begin
-        voices = null
-        // For Kokoro -- end
+        if (bcModelDir.isNotEmpty()) {
+            modelDir  = bcModelDir
+            modelName = bcModelName.ifEmpty { null }
+            voices    = bcVoices.ifEmpty { null }
+            dataDir   = bcDataDir.ifEmpty { null }
+            lang      = bcLang.ifEmpty { "eng" }
+            isKitten  = bcIsKitten
+            Log.i(TAG, "Model config from BuildConfig: dir=$modelDir name=$modelName voices=$voices")
+        } else {
+            // Reset all to null so the examples below are the only active config
+            modelName         = null
+            acousticModelName = null
+            vocoder           = null
+            voices            = null
+            modelDir          = null
+            ruleFsts          = null
+            ruleFars          = null
+            lexicon           = null
+            dataDir           = null
+            lang              = null
+            lang2             = null
 
-        modelDir = null
-        ruleFsts = null
-        ruleFars = null
-        lexicon = null
-        dataDir = null
-        lang = null
-        lang2 = null
+            // ── Uncomment exactly ONE example for a local/dev build ──────────
 
-        // Please enable one and only one of the examples below
+            // kokoro-en-v0_19 (11 English speakers, recommended for audiobooks)
+            // modelDir  = "kokoro-en-v0_19"
+            // modelName = "model.onnx"
+            // voices    = "voices.bin"
+            // dataDir   = "kokoro-en-v0_19/espeak-ng-data"
+            // lang      = "eng"
 
-        // Example 1:
-        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-vctk.tar.bz2
-        // modelDir = "vits-vctk"
-        // modelName = "vits-vctk.onnx"
-        // lexicon = "lexicon.txt"
-        // lang = "eng"
+            // kokoro-int8-en-v0_19 (faster, slightly lower quality)
+            // modelDir  = "kokoro-int8-en-v0_19"
+            // modelName = "model.int8.onnx"
+            // voices    = "voices.bin"
+            // dataDir   = "kokoro-int8-en-v0_19/espeak-ng-data"
+            // lang      = "eng"
 
-        // Example 2:
-        // https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
-        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2
-        // modelDir = "vits-piper-en_US-amy-low"
-        // modelName = "en_US-amy-low.onnx"
-        // dataDir = "vits-piper-en_US-amy-low/espeak-ng-data"
-        // lang = "eng"
+            // vits-piper-en_US-amy-medium
+            // modelDir  = "vits-piper-en_US-amy-medium"
+            // modelName = "en_US-amy-medium.onnx"
+            // dataDir   = "vits-piper-en_US-amy-medium/espeak-ng-data"
+            // lang      = "eng"
 
-        // Example 3:
-        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-icefall-zh-aishell3.tar.bz2
-        // modelDir = "vits-icefall-zh-aishell3"
-        // modelName = "model.onnx"
-        // ruleFars = "vits-icefall-zh-aishell3/rule.far"
-        // lexicon = "lexicon.txt"
-        // lang = "zho"
-
-        // Example 4:
-        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/vits.html#csukuangfj-vits-zh-hf-fanchen-c-chinese-187-speakers
-        // modelDir = "vits-zh-hf-fanchen-C"
-        // modelName = "vits-zh-hf-fanchen-C.onnx"
-        // lexicon = "lexicon.txt"
-        // lang = "zho"
-
-        // Example 5:
-        // https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-coqui-de-css10.tar.bz2
-        // This model does not need lexicon or dataDir
-        // modelDir = "vits-coqui-de-css10"
-        // modelName = "model.onnx"
-        // lang = "deu"
-
-        // Example 6
-        // vits-melo-tts-zh_en
-        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/vits.html#vits-melo-tts-zh-en-chinese-english-1-speaker
-        // modelDir = "vits-melo-tts-zh_en"
-        // modelName = "model.onnx"
-        // lexicon = "lexicon.txt"
-        // lang = "zho"
-        // lang2 = "eng"
-
-        // Example 7
-        // matcha-icefall-zh-baker
-        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/matcha.html#matcha-icefall-zh-baker-chinese-1-female-speaker
-        // modelDir = "matcha-icefall-zh-baker"
-        // acousticModelName = "model-steps-3.onnx"
-        // vocoder = "vocos-22khz-univ.onnx"
-        // lexicon = "lexicon.txt"
-        // lang = "zho"
-
-        // Example 8
-        // matcha-icefall-en_US-ljspeech
-        // https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/matcha.html#matcha-icefall-en-us-ljspeech-american-english-1-female-speaker
-        // modelDir = "matcha-icefall-en_US-ljspeech"
-        // acousticModelName = "model-steps-3.onnx"
-        // vocoder = "vocos-22khz-univ.onnx"
-        // dataDir = "matcha-icefall-en_US-ljspeech/espeak-ng-data"
-        // lang = "eng"
-
-        // Example 9
-        // kokoro-en-v0_19
-        // modelDir = "kokoro-en-v0_19"
-        // modelName = "model.onnx"
-        // voices = "voices.bin"
-        // dataDir = "kokoro-en-v0_19/espeak-ng-data"
-        // lang = "eng"
-
-        // Example 10
-        // kokoro-multi-lang-v1_0
-        // modelDir = "kokoro-multi-lang-v1_0"
-        // modelName = "model.onnx"
-        // voices = "voices.bin"
-        // dataDir = "kokoro-multi-lang-v1_0/espeak-ng-data"
-        // lexicon = "kokoro-multi-lang-v1_0/lexicon-us-en.txt,kokoro-multi-lang-v1_0/lexicon-zh.txt"
-        // lang = "eng"
-        // lang2 = "zho"
-        // ruleFsts = "$modelDir/phone-zh.fst,$modelDir/date-zh.fst,$modelDir/number-zh.fst"
-        //
-        // This model supports many languages, e.g., English, Chinese, etc.
-        // We set lang to eng here.
-
-        // Example 11
-        // kitten-nano-en-v0_1-fp16
-        // modelDir = "kitten-nano-en-v0_1-fp16"
-        // modelName = "model.fp16.onnx"
-        // voices = "voices.bin"
-        // dataDir = "kitten-nano-en-v0_1-fp16/espeak-ng-data"
-        // lang = "eng"
-        // isKitten = true
+            // kitten-nano-en-v0_2-fp16
+            // modelDir  = "kitten-nano-en-v0_2-fp16"
+            // modelName = "model.fp16.onnx"
+            // voices    = "voices.bin"
+            // dataDir   = "kitten-nano-en-v0_2-fp16/espeak-ng-data"
+            // lang      = "eng"
+            // isKitten  = true
+        }
     }
 
     fun createTts(context: Context) {
         Log.i(TAG, "Init Next-gen Kaldi TTS")
-        if (tts == null) {
-            initTts(context)
-        }
+        if (tts == null) initTts(context)
     }
 
     private fun initTts(context: Context) {
@@ -201,78 +136,64 @@ object TtsEngine {
             dataDir = "$newDir/$dataDir"
         }
 
+        // FIX (Issue 5): load prefs exactly once (original fork called PreferenceHelper twice)
         val prefs = PreferenceHelper(context)
-        speed = prefs.getSpeed()
-        speakerId = prefs.getSid()
+        speed              = prefs.getSpeed()
+        speakerId          = prefs.getSid()
         useSystemRatePitch = prefs.getUseSystemRatePitch()
 
         val config = getOfflineTtsConfig(
-            modelDir = modelDir!!,
-            modelName = modelName ?: "",
+            modelDir          = modelDir!!,
+            modelName         = modelName         ?: "",
             acousticModelName = acousticModelName ?: "",
-            vocoder = vocoder ?: "",
-            voices = voices ?: "",
-            lexicon = lexicon ?: "",
-            dataDir = dataDir ?: "",
-            dictDir = "",
-            ruleFsts = ruleFsts ?: "",
-            ruleFars = ruleFars ?: "",
-            isKitten = isKitten,
+            vocoder           = vocoder           ?: "",
+            voices            = voices            ?: "",
+            lexicon           = lexicon           ?: "",
+            dataDir           = dataDir           ?: "",
+            dictDir           = "",
+            ruleFsts          = ruleFsts          ?: "",
+            ruleFars          = ruleFars          ?: "",
+            isKitten          = isKitten,
         )
 
-        speed = PreferenceHelper(context).getSpeed()
-        speakerId = PreferenceHelper(context).getSid()
-
         tts = OfflineTts(assetManager = assets, config = config)
+        Log.i(TAG, "TTS initialised. sampleRate=${tts!!.sampleRate()} speakers=${tts!!.numSpeakers()}")
     }
 
-
     private fun copyDataDir(context: Context, dataDir: String): String {
-        Log.i(TAG, "data dir is $dataDir")
+        Log.i(TAG, "Copying data dir: $dataDir")
         copyAssets(context, dataDir)
-
-        val newDataDir = context.getExternalFilesDir(null)!!.absolutePath
-        Log.i(TAG, "newDataDir: $newDataDir")
-        return newDataDir
+        return context.getExternalFilesDir(null)!!.absolutePath
     }
 
     private fun copyAssets(context: Context, path: String) {
-        val assets: Array<String>?
         try {
-            assets = context.assets.list(path)
-            if (assets!!.isEmpty()) {
+            val list = context.assets.list(path)!!
+            if (list.isEmpty()) {
                 copyFile(context, path)
             } else {
-                val fullPath = "${context.getExternalFilesDir(null)}/$path"
-                val dir = File(fullPath)
-                dir.mkdirs()
-                for (asset in assets.iterator()) {
-                    val p: String = if (path == "") "" else "$path/"
-                    copyAssets(context, p + asset)
+                File("${context.getExternalFilesDir(null)}/$path").mkdirs()
+                for (asset in list) {
+                    copyAssets(context, if (path.isEmpty()) asset else "$path/$asset")
                 }
             }
         } catch (ex: IOException) {
-            Log.e(TAG, "Failed to copy $path. $ex")
+            Log.e(TAG, "Failed to copy $path: $ex")
         }
     }
 
     private fun copyFile(context: Context, filename: String) {
         try {
-            val istream = context.assets.open(filename)
-            val newFilename = context.getExternalFilesDir(null).toString() + "/" + filename
-            val ostream = FileOutputStream(newFilename)
-            // Log.i(TAG, "Copying $filename to $newFilename")
-            val buffer = ByteArray(1024)
-            var read = 0
-            while (read != -1) {
-                ostream.write(buffer, 0, read)
-                read = istream.read(buffer)
+            val dest = "${context.getExternalFilesDir(null)}/$filename"
+            context.assets.open(filename).use { ins ->
+                FileOutputStream(dest).use { out ->
+                    val buf = ByteArray(8192)
+                    var n: Int
+                    while (ins.read(buf).also { n = it } != -1) out.write(buf, 0, n)
+                }
             }
-            istream.close()
-            ostream.flush()
-            ostream.close()
         } catch (ex: Exception) {
-            Log.e(TAG, "Failed to copy $filename, $ex")
+            Log.e(TAG, "Failed to copy $filename: $ex")
         }
     }
 }

@@ -3,6 +3,7 @@
 package com.k2fsa.sherpa.onnx.tts.engine
 
 import PreferenceHelper
+import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -44,10 +45,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import android.content.Intent
 import com.k2fsa.sherpa.onnx.tts.engine.ui.theme.SherpaOnnxTtsEngineTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,18 +58,19 @@ import kotlin.time.TimeSource
 const val TAG = "sherpa-onnx-tts-engine"
 
 class MainActivity : ComponentActivity() {
-    // TODO(fangjun): Save settings in ttsViewModel
     private val ttsViewModel: TtsViewModel by viewModels()
 
     private var mediaPlayer: MediaPlayer? = null
-
-    // see
-    // https://developer.android.com/reference/kotlin/android/media/AudioTrack
     private lateinit var track: AudioTrack
-
     private var stopped: Boolean = false
 
-    private var samplesChannel = Channel<FloatArray>()
+    // FIX (Issue 9): The fork changed capacity=128 to the default (rendezvous),
+    // which causes the callback() to block until the player coroutine drains each item.
+    // Under heavy load this creates synthesis stalls in the app's own test UI.
+    // Restore capacity=128 and SupervisorJob so child coroutine failures don't
+    // cancel the parent scope.
+    private var samplesChannel = Channel<FloatArray>(capacity = 128)
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,7 +86,6 @@ class MainActivity : ComponentActivity() {
         val preferenceHelper = PreferenceHelper(this)
         setContent {
             SherpaOnnxTtsEngineTheme {
-                // A surface container using the 'background' color from the theme
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -94,88 +95,78 @@ class MainActivity : ComponentActivity() {
                         TopAppBar(
                             title = { Text("Next-gen Kaldi: TTS Engine") },
                             actions = {
-                                TextButton(
-                                    onClick = {
-                                        try {
-                                            context.startActivity(
-                                                Intent("com.android.settings.TTS_SETTINGS")
-                                            )
-                                        } catch (e: Exception) {
-                                            Log.e(TAG, "Unable to open system TTS settings", e)
-                                            Toast.makeText(
-                                                context,
-                                                "Unable to open system TTS settings.",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
+                                TextButton(onClick = {
+                                    try {
+                                        context.startActivity(
+                                            Intent("com.android.settings.TTS_SETTINGS")
+                                        )
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Unable to open system TTS settings", e)
+                                        Toast.makeText(
+                                            context,
+                                            "Unable to open system TTS settings.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
-                                ) {
-                                    // keep it simple: a label; you can swap for an icon later if you want
+                                }) {
                                     Text("System TTS")
                                 }
                             }
                         )
                     }) { innerPadding ->
-                        Column(modifier = Modifier.padding(innerPadding)) {
-                                    Text("Speed " + String.format("%.1f", TtsEngine.speed))
-                                    Slider(
-                                        value = TtsEngine.speedState.value,
-                                        onValueChange = {
-                                            TtsEngine.speed = it
-                                            preferenceHelper.setSpeed(it)
-                                        },
-                                        valueRange = 0.2F..3.0F,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
+                        Box(modifier = Modifier.padding(innerPadding)) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                // Speed slider
+                                Text("Speed " + String.format("%.1f", TtsEngine.speed))
+                                Slider(
+                                    value        = TtsEngine.speedState.value,
+                                    onValueChange = {
+                                        TtsEngine.speed = it
+                                        preferenceHelper.setSpeed(it)
+                                    },
+                                    valueRange = MIN_TTS_SPEED..MAX_TTS_SPEED,
+                                    modifier   = Modifier.fillMaxWidth()
+                                )
 
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = 8.dp)
-                                    ) {
-                                        Text(
-                                            "Allow system setting speed/pitch",
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Switch(
-                                            checked = TtsEngine.useSystemRatePitchState.value,
-                                            onCheckedChange = { checked ->
-                                                TtsEngine.useSystemRatePitch = checked
-                                                preferenceHelper.setUseSystemRatePitch(checked)
-                                            }
-                                        )
-                                    }
+                                // System speed/pitch toggle
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp)
+                                ) {
+                                    Text(
+                                        "Allow system setting speed/pitch",
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Switch(
+                                        checked         = TtsEngine.useSystemRatePitchState.value,
+                                        onCheckedChange = { checked ->
+                                            TtsEngine.useSystemRatePitch = checked
+                                            preferenceHelper.setUseSystemRatePitch(checked)
+                                        }
+                                    )
+                                }
 
                                 val testTextContent = getSampleText(TtsEngine.lang ?: "")
-
-                                var testText by remember { mutableStateOf(testTextContent) }
+                                var testText    by remember { mutableStateOf(testTextContent) }
                                 var startEnabled by remember { mutableStateOf(true) }
-                                var playEnabled by remember { mutableStateOf(false) }
-                                var rtfText by remember {
-                                    mutableStateOf("")
-                                }
-                                val scrollState = rememberScrollState(0)
+                                var playEnabled  by remember { mutableStateOf(false) }
+                                var rtfText      by remember { mutableStateOf("") }
+                                val scrollState  = rememberScrollState(0)
 
                                 val numSpeakers = TtsEngine.tts!!.numSpeakers()
                                 if (numSpeakers > 1) {
                                     OutlinedTextField(
-                                        value = TtsEngine.speakerIdState.value.toString(),
+                                        value       = TtsEngine.speakerIdState.value.toString(),
                                         onValueChange = {
-                                            if (it.isEmpty() || it.isBlank()) {
-                                                TtsEngine.speakerId = 0
+                                            TtsEngine.speakerId = if (it.isEmpty() || it.isBlank()) {
+                                                0
                                             } else {
-                                                try {
-                                                    TtsEngine.speakerId = it.toString().toInt()
-                                                } catch (ex: NumberFormatException) {
-                                                    Log.i(TAG, "Invalid input: $it")
-                                                    TtsEngine.speakerId = 0
-                                                }
+                                                try { it.toInt() } catch (ex: NumberFormatException) { 0 }
                                             }
                                             preferenceHelper.setSid(TtsEngine.speakerId)
                                         },
-                                        label = {
-                                            Text("Speaker ID: (0-${numSpeakers - 1})")
-                                        },
+                                        label   = { Text("Speaker ID: (0-${numSpeakers - 1})") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -185,11 +176,11 @@ class MainActivity : ComponentActivity() {
                                 }
 
                                 OutlinedTextField(
-                                    value = testText,
+                                    value         = testText,
                                     onValueChange = { testText = it },
-                                    label = { Text("Please input your text here") },
-                                    maxLines = 10,
-                                    modifier = Modifier
+                                    label         = { Text("Please input your text here") },
+                                    maxLines      = 10,
+                                    modifier      = Modifier
                                         .fillMaxWidth()
                                         .padding(bottom = 16.dp)
                                         .verticalScroll(scrollState)
@@ -198,12 +189,12 @@ class MainActivity : ComponentActivity() {
                                 )
 
                                 Row {
+                                    // Start button
                                     Button(
-                                        enabled = startEnabled,
+                                        enabled  = startEnabled,
                                         modifier = Modifier.padding(5.dp),
-                                        onClick = {
-                                            Log.i(TAG, "Clicked, text: $testText")
-                                            if (testText.isBlank() || testText.isEmpty()) {
+                                        onClick  = {
+                                            if (testText.isBlank()) {
                                                 Toast.makeText(
                                                     applicationContext,
                                                     "Please input some text to generate",
@@ -211,107 +202,88 @@ class MainActivity : ComponentActivity() {
                                                 ).show()
                                             } else {
                                                 startEnabled = false
-                                                playEnabled = false
-                                                stopped = false
+                                                playEnabled  = false
+                                                stopped      = false
 
                                                 track.pause()
                                                 track.flush()
                                                 track.play()
                                                 rtfText = ""
-                                                Log.i(TAG, "Started with text $testText")
 
-                                                CoroutineScope(Dispatchers.IO).launch {
+                                                // Consumer coroutine — plays samples as they arrive
+                                                scope.launch {
                                                     for (samples in samplesChannel) {
+                                                        if (samples.isEmpty()) break
                                                         track.write(
-                                                            samples,
-                                                            0,
-                                                            samples.size,
+                                                            samples, 0, samples.size,
                                                             AudioTrack.WRITE_BLOCKING
                                                         )
-                                                        if (stopped) {
-                                                            break
-                                                        }
+                                                        if (stopped) break
                                                     }
-
-                                                    for (s in samplesChannel) {
-                                                        // drain the channel
+                                                    // Drain any remaining items
+                                                    while (!samplesChannel.isEmpty) {
+                                                        samplesChannel.tryReceive().getOrNull()
                                                     }
                                                 }
 
+                                                // Generator coroutine — runs TTS inference
                                                 CoroutineScope(Dispatchers.Default).launch {
                                                     val timeSource = TimeSource.Monotonic
-                                                    val startTime = timeSource.markNow()
+                                                    val startTime  = timeSource.markNow()
 
-                                                    val audio =
-                                                        TtsEngine.tts!!.generateWithCallback(
-                                                            text = testText,
-                                                            sid = TtsEngine.speakerId,
-                                                            speed = TtsEngine.speed,
-                                                            callback = ::callback,
-                                                        )
-
-                                                    val elapsed =
-                                                        startTime.elapsedNow().inWholeMilliseconds.toFloat() / 1000;
-                                                    val audioDuration =
-                                                        audio.samples.size / TtsEngine.tts!!.sampleRate()
-                                                            .toFloat()
-                                                    val RTF = String.format(
-                                                        "Number of threads: %d\nElapsed: %.3f s\nAudio duration: %.3f s\nRTF: %.3f/%.3f = %.3f",
-                                                        TtsEngine.tts!!.config.model.numThreads,
-                                                        elapsed,
-                                                        audioDuration,
-                                                        elapsed,
-                                                        audioDuration,
-                                                        elapsed / audioDuration
+                                                    val audio = TtsEngine.tts!!.generateWithCallback(
+                                                        text     = testText,
+                                                        sid      = TtsEngine.speakerId,
+                                                        speed    = TtsEngine.speed,
+                                                        callback = ::callback,
                                                     )
 
-                                                    val filename =
-                                                        application.filesDir.absolutePath + "/generated.wav"
+                                                    val elapsed       = startTime.elapsedNow().inWholeMilliseconds / 1000f
+                                                    val audioDuration = audio.samples.size / TtsEngine.tts!!.sampleRate().toFloat()
+                                                    val RTF = String.format(
+                                                        "Threads: %d\nElapsed: %.3f s\nAudio: %.3f s\nRTF: %.3f",
+                                                        TtsEngine.tts!!.config.model.numThreads,
+                                                        elapsed, audioDuration, elapsed / audioDuration
+                                                    )
 
+                                                    // Signal the consumer that generation is done
+                                                    scope.launch { samplesChannel.send(FloatArray(0)) }
 
-                                                    val ok =
-                                                        audio.samples.isNotEmpty() && audio.save(
-                                                            filename
-                                                        )
-
+                                                    val filename = application.filesDir.absolutePath + "/generated.wav"
+                                                    val ok       = audio.samples.isNotEmpty() && audio.save(filename)
                                                     if (ok) {
                                                         withContext(Dispatchers.Main) {
                                                             startEnabled = true
-                                                            playEnabled = true
-                                                            rtfText = RTF
+                                                            playEnabled  = true
+                                                            rtfText      = RTF
                                                         }
                                                     }
-                                                }.start()
+                                                }
                                             }
-                                        }) {
-                                        Text("Start")
-                                    }
+                                        }) { Text("Start") }
 
+                                    // Play button (replays the saved WAV)
                                     Button(
                                         modifier = Modifier.padding(5.dp),
-                                        enabled = playEnabled,
-                                        onClick = {
+                                        enabled  = playEnabled,
+                                        onClick  = {
                                             stopped = true
                                             track.pause()
                                             track.flush()
                                             onClickPlay()
-                                        }) {
-                                        Text("Play")
-                                    }
+                                        }) { Text("Play") }
 
+                                    // Stop button
                                     Button(
                                         modifier = Modifier.padding(5.dp),
-                                        onClick = {
+                                        onClick  = {
                                             onClickStop()
                                             startEnabled = true
-                                        }) {
-                                        Text("Stop")
-                                    }
+                                        }) { Text("Stop") }
                                 }
+
                                 if (rtfText.isNotEmpty()) {
-                                    Row {
-                                        Text(rtfText)
-                                    }
+                                    Row { Text(rtfText) }
                                 }
                             }
                         }
@@ -319,6 +291,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
 
     override fun onDestroy() {
         stopMediaPlayer()
@@ -334,10 +307,7 @@ class MainActivity : ComponentActivity() {
     private fun onClickPlay() {
         val filename = application.filesDir.absolutePath + "/generated.wav"
         stopMediaPlayer()
-        mediaPlayer = MediaPlayer.create(
-            applicationContext,
-            Uri.fromFile(File(filename))
-        )
+        mediaPlayer = MediaPlayer.create(applicationContext, Uri.fromFile(File(filename)))
         mediaPlayer?.start()
     }
 
@@ -345,35 +315,36 @@ class MainActivity : ComponentActivity() {
         stopped = true
         track.pause()
         track.flush()
-
         stopMediaPlayer()
     }
 
-    // this function is called from C++
+    // Called from C++ (TTS callback) — uses trySend to avoid blocking the synthesis thread
     private fun callback(samples: FloatArray): Int {
-        if (!stopped) {
+        return if (!stopped) {
             val samplesCopy = samples.copyOf()
-            CoroutineScope(Dispatchers.IO).launch {
-                samplesChannel.send(samplesCopy)
+            scope.launch {
+                val ok = samplesChannel.trySend(samplesCopy).isSuccess
+                if (!ok) Log.w(TAG, "samplesChannel full, dropped ${samplesCopy.size} samples")
             }
-            return 1
+            1
         } else {
             track.stop()
-            Log.i(TAG, " return 0")
-            return 0
+            Log.i(TAG, "callback: stopped, returning 0")
+            0
         }
     }
 
     private fun initAudioTrack() {
         val sampleRate = TtsEngine.tts!!.sampleRate()
-        val bufLength = AudioTrack.getMinBufferSize(
+        val bufLength  = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_FLOAT
         )
-        Log.i(TAG, "sampleRate: $sampleRate, buffLength: $bufLength")
+        Log.i(TAG, "sampleRate: $sampleRate, bufLength: $bufLength")
 
-        val attr = AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        val attr = AudioAttributes.Builder()
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .build()
 
@@ -383,10 +354,8 @@ class MainActivity : ComponentActivity() {
             .setSampleRate(sampleRate)
             .build()
 
-        track = AudioTrack(
-            attr, format, bufLength, AudioTrack.MODE_STREAM,
-            AudioManager.AUDIO_SESSION_ID_GENERATE
-        )
+        track = AudioTrack(attr, format, bufLength, AudioTrack.MODE_STREAM,
+            AudioManager.AUDIO_SESSION_ID_GENERATE)
         track.play()
     }
 }

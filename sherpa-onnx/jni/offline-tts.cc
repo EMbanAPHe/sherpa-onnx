@@ -238,6 +238,7 @@ Java_com_k2fsa_sherpa_onnx_OfflineTts_generateImpl(JNIEnv *env, jobject /*obj*/,
   env->SetObjectArrayElement(obj_arr, 1, NewInteger(env, audio.sample_rate));
 
   env->ReleaseStringUTFChars(text, p_text);
+  env->DeleteLocalRef(samples_arr);
 
   return obj_arr;
 }
@@ -249,31 +250,18 @@ Java_com_k2fsa_sherpa_onnx_OfflineTts_generateWithCallbackImpl(
     jfloat speed, jobject callback) {
   const char *p_text = env->GetStringUTFChars(text, nullptr);
 
+  // FIX (Issue 4): the original fork's generateWithCallbackImpl was missing
+  // DeleteLocalRef calls for cls, jklass, and should_continue, causing a JNI
+  // local reference table overflow on long texts (>512 sentences).
   std::function<int32_t(const float *, int32_t, float)> callback_wrapper =
       [env, callback](const float *samples, int32_t n,
                       float /*progress*/) -> int {
     jclass cls = env->GetObjectClass(callback);
 
-#if 0
-        // this block is for debugging only
-        // see also
-        // https://jnjosh.com/posts/kotlinfromcpp/
-        jmethodID classMethodId =
-            env->GetMethodID(cls, "getClass", "()Ljava/lang/Class;");
-        jobject klassObj = env->CallObjectMethod(callback, classMethodId);
-        auto klassObject = env->GetObjectClass(klassObj);
-        auto nameMethodId =
-            env->GetMethodID(klassObject, "getName", "()Ljava/lang/String;");
-        jstring classString =
-            (jstring)env->CallObjectMethod(klassObj, nameMethodId);
-        auto className = env->GetStringUTFChars(classString, NULL);
-        SHERPA_ONNX_LOGE("name is: %s", className);
-        env->ReleaseStringUTFChars(classString, className);
-#endif
-
     jmethodID mid = env->GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;");
     if (mid == nullptr) {
       SHERPA_ONNX_LOGE("Failed to get the callback. Ignore it.");
+      env->DeleteLocalRef(cls);
       return 1;
     }
 
@@ -283,7 +271,15 @@ Java_com_k2fsa_sherpa_onnx_OfflineTts_generateWithCallbackImpl(
     jobject should_continue = env->CallObjectMethod(callback, mid, samples_arr);
     jclass jklass = env->GetObjectClass(should_continue);
     jmethodID int_value_mid = env->GetMethodID(jklass, "intValue", "()I");
-    return env->CallIntMethod(should_continue, int_value_mid);
+    jint ret = env->CallIntMethod(should_continue, int_value_mid);
+
+    // Clean up all local refs created in this callback invocation
+    env->DeleteLocalRef(samples_arr);
+    env->DeleteLocalRef(should_continue);
+    env->DeleteLocalRef(jklass);
+    env->DeleteLocalRef(cls);
+
+    return ret;
   };
 
   auto tts = reinterpret_cast<sherpa_onnx::OfflineTts *>(ptr);
@@ -300,10 +296,16 @@ Java_com_k2fsa_sherpa_onnx_OfflineTts_generateWithCallbackImpl(
   env->SetObjectArrayElement(obj_arr, 1, NewInteger(env, audio.sample_rate));
 
   env->ReleaseStringUTFChars(text, p_text);
+  env->DeleteLocalRef(samples_arr);
 
   return obj_arr;
 }
 
+// generateStreamImpl is kept for source compatibility but is NOT referenced
+// by TtsService.kt in the fixed version (we use generateWithCallback instead,
+// which IS present in the published v1.12.15 JitPack AAR).
+// This function IS compiled into the custom .so built by the CI workflows,
+// but will never be called by the Kotlin layer through the AAR path.
 SHERPA_ONNX_EXTERN_C
 JNIEXPORT void JNICALL
 Java_com_k2fsa_sherpa_onnx_OfflineTts_generateStreamImpl(
@@ -311,8 +313,6 @@ Java_com_k2fsa_sherpa_onnx_OfflineTts_generateStreamImpl(
     jfloat speed, jobject callback) {
   const char *p_text = env->GetStringUTFChars(text, nullptr);
 
-  // Reuse the same callback pattern as generateWithCallbackImpl, but
-  // don't build a final GeneratedAudio / Object[] result.
   std::function<int32_t(const float *, int32_t, float)> callback_wrapper =
       [env, callback](const float *samples, int32_t n,
                       float /*progress*/) -> int32_t {

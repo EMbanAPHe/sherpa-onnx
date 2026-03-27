@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- FIX (Issue 6): Use fully-qualified class name for settingsActivity.
+     The relative form ".MainActivity" works when namespace matches but is
+     fragile when the app ID suffix changes per-variant. -->
 <tts-engine xmlns:android="http://schemas.android.com/apk/res/android"
-    android:settingsActivity=".MainActivity"
+    android:settingsActivity="com.k2fsa.sherpa.onnx.tts.engine.MainActivity"
     >
 </tts-engine>
