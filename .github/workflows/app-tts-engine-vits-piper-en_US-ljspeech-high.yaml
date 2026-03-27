@@ -56,6 +56,17 @@ jobs:
           cp -v build-android-arm64-v8a/install/lib/*.so \
              android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/
 
+      # Download the pre-built AAR directly from GitHub releases.
+      # This bypasses JitPack entirely - no waiting for JitPack to build.
+      # Source: https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.15/sherpa-onnx-1.12.15.aar
+      - name: Download sherpa-onnx AAR
+        run: |
+          set -euxo pipefail
+          mkdir -p android/SherpaOnnxTtsEngine/app/libs
+          wget -q --show-progress "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.15/sherpa-onnx-1.12.15.aar" \
+            -O android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.15.aar
+          echo "AAR downloaded: $(du -h android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.15.aar)"
+
       - name: Download model
         run: |
           set -euxo pipefail
