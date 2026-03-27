@@ -18,9 +18,12 @@ const val MIN_TTS_SPEED = 0.2f
 const val MAX_TTS_SPEED = 3.0f
 
 object TtsEngine {
-    var tts: OfflineTts? = null
+    // The OfflineTts instance. TtsService captures a local reference at the
+    // start of each synthesis call, so setting this to null mid-synthesis is
+    // safe — the ongoing call completes with the old instance, and the next
+    // call will pick up the freshly initialised one.
+    @Volatile var tts: OfflineTts? = null
 
-    // ISO 639-3 language codes: eng, deu, zho, fra …
     var lang:  String? = null
     var lang2: String? = null
 
@@ -52,16 +55,12 @@ object TtsEngine {
     private var assets:            AssetManager? = null
     private var isKitten           = false
 
-    init {
-        // FIX (Issue 8): Read model config from BuildConfig fields, which are set
-        // by build.gradle.kts reading TTSENGINE_* from gradle.properties.
-        // CI workflows write gradle.properties before calling assembleDebug —
-        // no more fragile sed injection into this file.
-        //
-        // A non-empty BuildConfig.TTSENGINE_MODEL_DIR (or TTSENGINE_VOICES for Kokoro)
-        // activates the CI-injected model.  An empty value falls through to the
-        // commented-out examples below (useful for local dev builds).
+    // Tracks whether the asset data directory has already been extracted so we
+    // don't re-copy on every reinitialise.
+    private var dataDirExtracted   = false
+    private var extractedDataDir:  String? = null  // absolute path after extraction
 
+    init {
         val bcModelDir  = BuildConfig.TTSENGINE_MODEL_DIR.trim()
         val bcModelName = BuildConfig.TTSENGINE_MODEL_NAME.trim()
         val bcVoices    = BuildConfig.TTSENGINE_VOICES.trim()
@@ -76,41 +75,25 @@ object TtsEngine {
             dataDir   = bcDataDir.ifEmpty { null }
             lang      = bcLang.ifEmpty { "eng" }
             isKitten  = bcIsKitten
-            Log.i(TAG, "Model config from BuildConfig: dir=$modelDir name=$modelName voices=$voices")
+            Log.i(TAG, "Model from BuildConfig: dir=$modelDir name=$modelName voices=$voices")
         } else {
-            // Reset all to null so the examples below are the only active config
-            modelName         = null
-            acousticModelName = null
-            vocoder           = null
-            voices            = null
-            modelDir          = null
-            ruleFsts          = null
-            ruleFars          = null
-            lexicon           = null
-            dataDir           = null
-            lang              = null
-            lang2             = null
+            modelName = null; acousticModelName = null; vocoder = null
+            voices = null; modelDir = null; ruleFsts = null; ruleFars = null
+            lexicon = null; dataDir = null; lang = null; lang2 = null
 
-            // ── Uncomment exactly ONE example for a local/dev build ──────────
-
-            // kokoro-en-v0_19 (11 English speakers, recommended for audiobooks)
+            // ── Uncomment ONE for local dev builds ──────────────────────────
+            // kokoro-en-v0_19
             // modelDir  = "kokoro-en-v0_19"
             // modelName = "model.onnx"
             // voices    = "voices.bin"
             // dataDir   = "kokoro-en-v0_19/espeak-ng-data"
             // lang      = "eng"
 
-            // kokoro-int8-en-v0_19 (faster, slightly lower quality)
+            // kokoro-int8-en-v0_19
             // modelDir  = "kokoro-int8-en-v0_19"
             // modelName = "model.int8.onnx"
             // voices    = "voices.bin"
             // dataDir   = "kokoro-int8-en-v0_19/espeak-ng-data"
-            // lang      = "eng"
-
-            // vits-piper-en_US-amy-medium
-            // modelDir  = "vits-piper-en_US-amy-medium"
-            // modelName = "en_US-amy-medium.onnx"
-            // dataDir   = "vits-piper-en_US-amy-medium/espeak-ng-data"
             // lang      = "eng"
 
             // kitten-nano-en-v0_2-fp16
@@ -123,25 +106,58 @@ object TtsEngine {
         }
     }
 
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /** Create the TTS engine if it hasn't been created yet. */
     fun createTts(context: Context) {
-        Log.i(TAG, "Init Next-gen Kaldi TTS")
-        if (tts == null) initTts(context)
+        if (tts == null) {
+            Log.i(TAG, "createTts: initialising")
+            initTts(context)
+        }
     }
+
+    /**
+     * Destroy and recreate the TTS engine with updated settings from prefs.
+     * Call this after the user changes provider or thread count.
+     * Must be called from a background thread — involves file I/O.
+     */
+    fun reinitialize(context: Context) {
+        Log.i(TAG, "reinitialize: destroying old TTS instance")
+        tts?.release()
+        tts = null
+        // Note: dataDirExtracted stays true — assets were already extracted to disk,
+        // re-copying is unnecessary. initTts() reuses extractedDataDir directly.
+        initTts(context)
+    }
+
+    // ── Private ───────────────────────────────────────────────────────────────
 
     private fun initTts(context: Context) {
         assets = context.assets
 
-        if (dataDir != null) {
-            val newDir = copyDataDir(context, dataDir!!)
-            dataDir = "$newDir/$dataDir"
-        }
+        // Extract asset data dir once; on reinitialise we reuse the existing path.
+        val resolvedDataDir: String? = if (dataDir != null) {
+            if (!dataDirExtracted) {
+                val newDir = copyDataDir(context, dataDir!!)
+                extractedDataDir = "$newDir/$dataDir"
+                dataDirExtracted = true
+            }
+            extractedDataDir
+        } else null
 
-        // FIX (Issue 5): load prefs exactly once (original fork called PreferenceHelper twice)
         val prefs = PreferenceHelper(context)
         speed              = prefs.getSpeed()
         speakerId          = prefs.getSid()
         useSystemRatePitch = prefs.getUseSystemRatePitch()
 
+        val numThreads = prefs.getNumThreads()
+        val provider   = prefs.getProvider()
+
+        Log.i(TAG, "initTts: threads=$numThreads provider=$provider")
+
+        // getOfflineTtsConfig() hard-codes provider="cpu" and sets its own thread
+        // default.  Because OfflineTtsModelConfig uses var fields we can simply
+        // override them on the returned config before constructing OfflineTts.
         val config = getOfflineTtsConfig(
             modelDir          = modelDir!!,
             modelName         = modelName         ?: "",
@@ -149,15 +165,21 @@ object TtsEngine {
             vocoder           = vocoder           ?: "",
             voices            = voices            ?: "",
             lexicon           = lexicon           ?: "",
-            dataDir           = dataDir           ?: "",
+            dataDir           = resolvedDataDir   ?: "",
             dictDir           = "",
             ruleFsts          = ruleFsts          ?: "",
             ruleFars          = ruleFars          ?: "",
+            numThreads        = numThreads,
             isKitten          = isKitten,
         )
 
+        // Override the provider that getOfflineTtsConfig hardcodes.
+        config.model.provider = provider
+
         tts = OfflineTts(assetManager = assets, config = config)
-        Log.i(TAG, "TTS initialised. sampleRate=${tts!!.sampleRate()} speakers=${tts!!.numSpeakers()}")
+        Log.i(TAG, "TTS ready: sampleRate=${tts!!.sampleRate()} " +
+                "speakers=${tts!!.numSpeakers()} " +
+                "threads=${config.model.numThreads} provider=${config.model.provider}")
     }
 
     private fun copyDataDir(context: Context, dataDir: String): String {
@@ -195,5 +217,9 @@ object TtsEngine {
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to copy $filename: $ex")
         }
+    }
+
+    private companion object {
+        private const val TAG = "TtsEngine"
     }
 }

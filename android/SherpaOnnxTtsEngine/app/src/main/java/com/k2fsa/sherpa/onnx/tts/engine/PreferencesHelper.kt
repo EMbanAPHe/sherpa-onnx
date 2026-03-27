@@ -3,41 +3,61 @@ import android.content.SharedPreferences
 
 class PreferenceHelper(context: Context) {
 
-    private val PREFS_NAME = "com.k2fsa.sherpa.onnx.tts.engine"
-    private val SPEED_KEY = "speed"
-    private val SID_KEY = "speaker_id"
+    private val PREFS_NAME               = "com.k2fsa.sherpa.onnx.tts.engine"
+    private val SPEED_KEY                = "speed"
+    private val SID_KEY                  = "speaker_id"
     private val USE_SYSTEM_RATE_PITCH_KEY = "use_system_rate_pitch"
+    private val NUM_THREADS_KEY          = "num_threads"
+    private val PROVIDER_KEY             = "provider"
 
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun setSpeed(value: Float) {
-        val editor = sharedPreferences.edit()
-        editor.putFloat(SPEED_KEY, value)
-        editor.apply()
-    }
+    // ── Speed ────────────────────────────────────────────────────────────────
 
-    fun getSpeed(): Float {
-        return sharedPreferences.getFloat(SPEED_KEY, 1.0f)
-    }
+    fun setSpeed(value: Float) =
+        sharedPreferences.edit().putFloat(SPEED_KEY, value).apply()
 
-    fun setSid(value: Int) {
-        val editor = sharedPreferences.edit()
-        editor.putInt(SID_KEY, value)
-        editor.apply()
-    }
+    fun getSpeed(): Float =
+        sharedPreferences.getFloat(SPEED_KEY, 1.0f)
 
-    fun getSid(): Int {
-        return sharedPreferences.getInt(SID_KEY, 0)
-    }
+    // ── Speaker ID ───────────────────────────────────────────────────────────
 
-    fun setUseSystemRatePitch(value: Boolean) {
-        sharedPreferences.edit()
-            .putBoolean(USE_SYSTEM_RATE_PITCH_KEY, value)
-            .apply()
-    }
+    fun setSid(value: Int) =
+        sharedPreferences.edit().putInt(SID_KEY, value).apply()
 
-    fun getUseSystemRatePitch(): Boolean {
-        return sharedPreferences.getBoolean(USE_SYSTEM_RATE_PITCH_KEY, false)
-    }
+    fun getSid(): Int =
+        sharedPreferences.getInt(SID_KEY, 0)
+
+    // ── System speed/pitch pass-through ──────────────────────────────────────
+
+    fun setUseSystemRatePitch(value: Boolean) =
+        sharedPreferences.edit().putBoolean(USE_SYSTEM_RATE_PITCH_KEY, value).apply()
+
+    fun getUseSystemRatePitch(): Boolean =
+        sharedPreferences.getBoolean(USE_SYSTEM_RATE_PITCH_KEY, false)
+
+    // ── Thread count ─────────────────────────────────────────────────────────
+    // Default 4 matches getOfflineTtsConfig's automatic choice for Kokoro/Kitten.
+    // 1 or 2 threads often outperform 4 on big.LITTLE devices because ONNX
+    // won't schedule work onto slow efficiency cores.
+    // Valid values: 1, 2, 4
+
+    fun setNumThreads(value: Int) =
+        sharedPreferences.edit().putInt(NUM_THREADS_KEY, value).apply()
+
+    fun getNumThreads(): Int =
+        sharedPreferences.getInt(NUM_THREADS_KEY, 4)
+
+    // ── Execution provider ───────────────────────────────────────────────────
+    // "cpu"     — plain ONNX CPU (safe, always works)
+    // "xnnpack" — Google XNNPack (NEON vectorised CPU, ~10-30% faster, no risk)
+    // "nnapi"   — Android NNAPI (may route to NPU/GPU; requires android-27 build;
+    //             falls back to CPU automatically if unsupported)
+
+    fun setProvider(value: String) =
+        sharedPreferences.edit().putString(PROVIDER_KEY, value).apply()
+
+    fun getProvider(): String =
+        sharedPreferences.getString(PROVIDER_KEY, "cpu") ?: "cpu"
 }
