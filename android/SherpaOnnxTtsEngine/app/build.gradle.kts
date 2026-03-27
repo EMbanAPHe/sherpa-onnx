@@ -14,15 +14,12 @@ android {
 
         minSdk    = 21
         targetSdk = 34
-        // FIX Issue 7: was 20250918 (regressed), now >= original 20260326
         versionCode = 20260327
         versionName = "1.12.15-fork"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
 
-        // FIX Issue 8: expose model config via BuildConfig instead of sed-patching Kotlin.
-        // CI workflows write TTSENGINE_* to gradle.properties; TtsEngine.kt reads BuildConfig.
         fun prop(key: String): String = (project.findProperty(key) as String?) ?: ""
         buildConfigField("String",  "TTSENGINE_MODEL_DIR",  "\"${prop("TTSENGINE_MODEL_DIR")}\"")
         buildConfigField("String",  "TTSENGINE_MODEL_NAME", "\"${prop("TTSENGINE_MODEL_NAME")}\"")
@@ -49,11 +46,19 @@ android {
     }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.1" }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
-    sourceSets { getByName("main") { jniLibs.srcDirs("src/main/jniLibs") } }
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/jniLibs")
+        }
+    }
 }
 
 dependencies {
-    implementation("com.github.k2-fsa:sherpa-onnx:v1.12.15")
+    // The sherpa-onnx AAR is downloaded from GitHub releases by the CI workflow
+    // into app/libs/ before assembleDebug runs. This avoids any JitPack dependency.
+    // For local dev builds, run: wget -P app/libs https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.15/sherpa-onnx-1.12.15.aar
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.2")
