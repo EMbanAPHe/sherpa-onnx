@@ -16,6 +16,7 @@ import java.io.IOException
 
 const val MIN_TTS_SPEED = 0.2f
 const val MAX_TTS_SPEED = 3.0f
+private const val TAG = "TtsEngine"
 
 object TtsEngine {
     // The OfflineTts instance. TtsService captures a local reference at the
@@ -219,5 +220,4 @@ object TtsEngine {
         }
     }
 
-    private const val TAG = "TtsEngine"
 }
