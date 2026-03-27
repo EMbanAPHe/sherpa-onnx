@@ -14,6 +14,10 @@ jobs:
       APP_ID_SUFFIX: ".kokoro_en_v019"
       APP_NAME: "TTS Kokoro EN v0.19"
       APK_BASENAME: "SherpaTtsEngine-Kokoro-EN-v0_19"
+      # Build with android-27 to enable NNAPI support in the native library.
+      # The app still runs on Android 5+ (minSdk=21); android-27 is the NDK
+      # API level used during compilation, not the minimum device requirement.
+      SHERPA_ONNX_ANDROID_PLATFORM: android-27
 
     steps:
       - name: Checkout repository
@@ -56,16 +60,15 @@ jobs:
           cp -v build-android-arm64-v8a/install/lib/*.so \
              android/SherpaOnnxTtsEngine/app/src/main/jniLibs/arm64-v8a/
 
-      # Download the pre-built AAR directly from GitHub releases.
-      # This bypasses JitPack entirely - no waiting for JitPack to build.
-      # Source: https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.15/sherpa-onnx-1.12.15.aar
+      # Download the pre-built sherpa-onnx AAR from GitHub releases.
+      # Bypasses JitPack entirely.
       - name: Download sherpa-onnx AAR
         run: |
           set -euxo pipefail
           mkdir -p android/SherpaOnnxTtsEngine/app/libs
           wget -q --show-progress "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.15/sherpa-onnx-1.12.15.aar" \
             -O android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.15.aar
-          echo "AAR downloaded: $(du -h android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.15.aar)"
+          echo "AAR: $(du -h android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.15.aar)"
 
       - name: Download model
         run: |
