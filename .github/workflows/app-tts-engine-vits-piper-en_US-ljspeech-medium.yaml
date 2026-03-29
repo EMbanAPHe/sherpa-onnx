@@ -54,7 +54,7 @@ jobs:
       - name: Patch onnxruntime version
         run: |
           set -euxo pipefail
-          sed -i 's/onnxruntime_version=1.17.1/onnxruntime_version=1.23.2/' \n            build-android-arm64-v8a.sh
+          sed -i 's/onnxruntime_version=1.17.1/onnxruntime_version=1.23.2/' build-android-arm64-v8a.sh
           grep onnxruntime_version build-android-arm64-v8a.sh | head -1
 
       - name: Build JNI library (arm64-v8a)
