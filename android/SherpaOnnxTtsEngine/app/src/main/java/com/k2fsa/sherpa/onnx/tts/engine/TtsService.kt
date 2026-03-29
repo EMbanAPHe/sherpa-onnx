@@ -1,6 +1,8 @@
 package com.k2fsa.sherpa.onnx.tts.engine
 
+import PreferenceHelper
 import android.content.Intent
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import android.media.AudioFormat
 import android.speech.tts.SynthesisCallback
 import android.speech.tts.SynthesisRequest
@@ -45,6 +47,10 @@ class TtsService : TextToSpeechService() {
     @Volatile private var currentCancelled: AtomicBoolean? = null
     @Volatile private var currentQueue: LinkedBlockingQueue<QueueItem>? = null
 
+    // Cached PreferenceHelper — initialised in onCreate, used in onSynthesizeText
+    // to read silenceScale per call without rebuilding SharedPreferences each time.
+    private lateinit var prefs: PreferenceHelper
+
 
     // ── Text pre-splitting ────────────────────────────────────────────────────
 
@@ -62,14 +68,11 @@ class TtsService : TextToSpeechService() {
      *  4. The original punctuation character is kept at the END of its chunk
      *     so Kokoro's phonemiser applies the correct pause.
      */
-    private fun splitIntoClauses(text: String): List<String> {
-        // Regex: capture the text and the split character as separate groups.
-        // Group 1 = content up to (and including) the split punctuation.
+    private fun splitIntoClauses(text: String, minClauseWords: Int = MIN_CLAUSE_WORDS): List<String> {
         // Hard splits: . ! ?  (always split regardless of length)
         // Soft splits: , ; : — …  (split only when clause is long enough)
         val hardSplit = setOf('.', '!', '?')
         val softSplit = setOf(',', ';', ':', '—', '…')
-        val minClauseWords = MIN_CLAUSE_WORDS
 
         val chunks = mutableListOf<String>()
         val current = StringBuilder()
@@ -122,6 +125,7 @@ class TtsService : TextToSpeechService() {
     override fun onCreate() {
         Log.i(TAG, "onCreate tts service")
         super.onCreate()
+        prefs = PreferenceHelper(applicationContext)
         onLoadLanguage(TtsEngine.lang, "", "")
         if (TtsEngine.lang2 != null) onLoadLanguage(TtsEngine.lang2, "", "")
         // Warm up ONNX Runtime so JIT compilation happens at startup rather
@@ -230,10 +234,14 @@ class TtsService : TextToSpeechService() {
                 TtsEngine.speed
         }
 
+        // Read silenceScale fresh each call so the slider takes effect
+        // on the next sentence without needing Apply & Reinitialise.
+        val silenceScale = prefs.getSilenceScale()
+
         // Split into short clauses so Kokoro never infers more than
-        // MIN_CLAUSE_WORDS words at once.  This turns an 8-second silence
+        // minClauseWords words at once.  This turns an 8-second silence
         // into ~1-2 seconds before first audio.
-        val clauses = splitIntoClauses(text)
+        val clauses = splitIntoClauses(text, prefs.getMinClauseWords())
         Log.i(TAG, "onSynthesizeText: ${clauses.size} clause(s), speed=$effectiveSpeed")
         clauses.forEachIndexed { idx, c -> Log.i(TAG, "  clause[$idx]: \"$c\"") }
 
@@ -250,13 +258,16 @@ class TtsService : TextToSpeechService() {
                 for (clause in clauses) {
                     if (cancelled.get()) break
 
-                    tts.generateWithCallback(
-                        text     = clause,
-                        sid      = TtsEngine.speakerId,
-                        speed    = effectiveSpeed,
+                    tts.generateWithConfigAndCallback(
+                        text   = clause,
+                        config = com.k2fsa.sherpa.onnx.GenerationConfig(
+                            sid          = TtsEngine.speakerId,
+                            speed        = effectiveSpeed,
+                            silenceScale = silenceScale,
+                        ),
                     ) { floatSamples ->
-                        if (cancelled.get()) return@generateWithCallback 0
-                        if (floatSamples.isEmpty()) return@generateWithCallback 1
+                        if (cancelled.get()) return@generateWithConfigAndCallback 0
+                        if (floatSamples.isEmpty()) return@generateWithConfigAndCallback 1
 
                         val frames   = floatSamples.size
                         val pcmBytes = ByteArray(frames * 2)
@@ -271,7 +282,7 @@ class TtsService : TextToSpeechService() {
                         try {
                             queue.put(QueueItem.Data(pcmBytes, pcmBytes.size))
                         } catch (_: InterruptedException) {
-                            return@generateWithCallback 0
+                            return@generateWithConfigAndCallback 0
                         }
 
                         if (cancelled.get()) 0 else 1
@@ -349,6 +360,6 @@ class TtsService : TextToSpeechService() {
          * Must be non-empty and long enough to exercise all model layers.
          * The output is discarded; callback immediately returns 0 (stop).
          */
-        private const val WARMUP_TEXT = "Hello."
+        private const val WARMUP_TEXT = "The quick brown fox."  // long enough to exercise full ONNX graph
     }
 }

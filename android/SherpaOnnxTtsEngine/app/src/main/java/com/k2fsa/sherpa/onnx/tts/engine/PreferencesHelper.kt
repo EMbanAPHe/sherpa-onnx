@@ -87,4 +87,15 @@ class PreferenceHelper(context: Context) {
 
     fun getSilenceScale(): Float =
         sharedPreferences.getFloat(SILENCE_SCALE_KEY, 0.2f)
+
+    // ── Clause split threshold ────────────────────────────────────────────────
+    // Minimum words in a clause before splitting on soft punctuation (, ; : — …).
+    // Lower = faster first audio but more prosody breaks; higher = fewer breaks.
+    // Range 3–7. Default 4.
+
+    fun setMinClauseWords(value: Int) =
+        sharedPreferences.edit().putInt(MIN_CLAUSE_WORDS_KEY, value).apply()
+
+    fun getMinClauseWords(): Int =
+        sharedPreferences.getInt(MIN_CLAUSE_WORDS_KEY, 4)
 }

@@ -153,7 +153,6 @@ object TtsEngine {
 
         val numThreads   = prefs.getNumThreads()
         val provider     = prefs.getProvider()
-        val silenceScale = prefs.getSilenceScale()
 
         Log.i(TAG, "initTts: threads=$numThreads provider=$provider")
 
@@ -179,13 +178,12 @@ object TtsEngine {
         config.model.provider = provider
         config.model.debug    = false  // AAR hardcodes true; disable to eliminate
                                        // ~40 fprintf+logcat calls per synthesis
-        config.silenceScale   = silenceScale
 
         tts = OfflineTts(assetManager = assets, config = config)
         Log.i(TAG, "TTS ready: sampleRate=${tts!!.sampleRate()} " +
                 "speakers=${tts!!.numSpeakers()} " +
                 "threads=${config.model.numThreads} provider=${config.model.provider} " +
-                "silenceScale=${config.silenceScale} debug=${config.model.debug}")
+                "debug=${config.model.debug}")
     }
 
     private fun copyDataDir(context: Context, dataDir: String): String {

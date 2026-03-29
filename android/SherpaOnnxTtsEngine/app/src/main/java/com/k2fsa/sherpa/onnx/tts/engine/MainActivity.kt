@@ -463,7 +463,33 @@ class MainActivity : ComponentActivity() {
                                     modifier   = Modifier.fillMaxWidth(),
                                 )
                                 Text(
-                                    "Controls silence at clause boundaries. Lower = tighter gaps. Tap Apply to take effect.",
+                                    "Controls silence at clause boundaries. Lower = tighter gaps. Takes effect immediately.",
+                                    fontSize  = 11.sp,
+                                    color     = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+
+                                Spacer(Modifier.height(8.dp))
+
+                                // Clause split threshold
+                                var minClauseWords by remember {
+                                    mutableStateOf(preferenceHelper.getMinClauseWords())
+                                }
+                                Text(
+                                    "Min clause words  $minClauseWords",
+                                    fontSize = 13.sp,
+                                )
+                                Slider(
+                                    value         = minClauseWords.toFloat(),
+                                    onValueChange = {
+                                        minClauseWords = it.toInt()
+                                        preferenceHelper.setMinClauseWords(it.toInt())
+                                    },
+                                    valueRange = 3f..7f,
+                                    steps      = 3,
+                                    modifier   = Modifier.fillMaxWidth(),
+                                )
+                                Text(
+                                    "Min words before splitting on comma/semicolon. Lower = faster start, more breaks.",
                                     fontSize  = 11.sp,
                                     color     = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

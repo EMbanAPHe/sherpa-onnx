@@ -4,12 +4,120 @@
 
 #include "sherpa-onnx/csrc/offline-tts.h"
 
+#include <string>
+#include <vector>
+
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/text-utils.h"
 #include "sherpa-onnx/csrc/wave-writer.h"
 #include "sherpa-onnx/jni/common.h"
 
 namespace sherpa_onnx {
+
+// ── GetGenerationConfig ───────────────────────────────────────────────────────
+// Reads a Kotlin GenerationConfig object into the C++ struct.
+// Handles all fields including referenceAudio and the extra Map<String,String>.
+
+static GenerationConfig GetGenerationConfig(JNIEnv *env, jobject config_obj) {
+  GenerationConfig ans;
+
+  if (!config_obj) {
+    SHERPA_ONNX_LOGE("GenerationConfig is null");
+    return ans;
+  }
+
+  jclass cls = env->GetObjectClass(config_obj);
+
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.silence_scale, silenceScale, cls, config_obj);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.speed, speed, cls, config_obj);
+  SHERPA_ONNX_JNI_READ_INT(ans.sid, sid, cls, config_obj);
+
+  // referenceAudio (optional float[])
+  jfieldID fid = env->GetFieldID(cls, "referenceAudio", "[F");
+  if (fid != nullptr) {
+    jfloatArray arr = (jfloatArray)env->GetObjectField(config_obj, fid);
+    if (arr != nullptr) {
+      jsize len = env->GetArrayLength(arr);
+      jfloat *elems = env->GetFloatArrayElements(arr, nullptr);
+      ans.reference_audio.assign(elems, elems + len);
+      env->ReleaseFloatArrayElements(arr, elems, JNI_ABORT);
+      env->DeleteLocalRef(arr);
+    }
+  }
+
+  SHERPA_ONNX_JNI_READ_INT(ans.reference_sample_rate, referenceSampleRate, cls,
+                           config_obj);
+
+  SHERPA_ONNX_JNI_READ_STRING(ans.reference_text, referenceText, cls,
+                              config_obj);
+
+  SHERPA_ONNX_JNI_READ_INT(ans.num_steps, numSteps, cls, config_obj);
+
+  // extra Map<String, String>
+  fid = env->GetFieldID(cls, "extra", "Ljava/util/Map;");
+  if (fid != nullptr) {
+    jobject map_obj = env->GetObjectField(config_obj, fid);
+    if (map_obj != nullptr) {
+      jclass map_cls = env->GetObjectClass(map_obj);
+      jmethodID entrySet =
+          env->GetMethodID(map_cls, "entrySet", "()Ljava/util/Set;");
+      jobject entry_set = env->CallObjectMethod(map_obj, entrySet);
+
+      jclass set_cls = env->GetObjectClass(entry_set);
+      jmethodID iteratorMid =
+          env->GetMethodID(set_cls, "iterator", "()Ljava/util/Iterator;");
+      jobject iterator = env->CallObjectMethod(entry_set, iteratorMid);
+
+      jclass iter_cls = env->GetObjectClass(iterator);
+      jmethodID hasNextMid = env->GetMethodID(iter_cls, "hasNext", "()Z");
+      jmethodID nextMid =
+          env->GetMethodID(iter_cls, "next", "()Ljava/lang/Object;");
+
+      jclass entry_cls = env->FindClass("java/util/Map$Entry");
+      jmethodID getKeyMid =
+          env->GetMethodID(entry_cls, "getKey", "()Ljava/lang/Object;");
+      jmethodID getValueMid =
+          env->GetMethodID(entry_cls, "getValue", "()Ljava/lang/Object;");
+
+      while (env->CallBooleanMethod(iterator, hasNextMid)) {
+        jobject entry = env->CallObjectMethod(iterator, nextMid);
+        if (!entry) continue;
+
+        jstring key   = (jstring)env->CallObjectMethod(entry, getKeyMid);
+        jstring value = (jstring)env->CallObjectMethod(entry, getValueMid);
+
+        if (key != nullptr && value != nullptr) {
+          const char *keyChars   = env->GetStringUTFChars(key, nullptr);
+          const char *valueChars = env->GetStringUTFChars(value, nullptr);
+          ans.extra[std::string(keyChars)] = std::string(valueChars);
+          env->ReleaseStringUTFChars(key, keyChars);
+          env->ReleaseStringUTFChars(value, valueChars);
+        }
+
+        env->DeleteLocalRef(key);
+        env->DeleteLocalRef(value);
+        env->DeleteLocalRef(entry);
+      }
+
+      env->DeleteLocalRef(entry_set);
+      env->DeleteLocalRef(iterator);
+      env->DeleteLocalRef(entry_cls);
+      env->DeleteLocalRef(iter_cls);
+      env->DeleteLocalRef(set_cls);
+      env->DeleteLocalRef(map_cls);
+      env->DeleteLocalRef(map_obj);
+    }
+  }
+
+  env->DeleteLocalRef(cls);
+  return ans;
+}
+
+// ── GetOfflineTtsConfig ───────────────────────────────────────────────────────
+// Reads the Kotlin OfflineTtsConfig object into the C++ struct.
+// Only reads fields this fork supports (vits/matcha/kokoro/kitten).
+// New model types added in v1.12.34 (zipvoice/pocket/supertonic) are not read
+// here — that is intentional; they default to empty and are simply unused.
 
 static OfflineTtsConfig GetOfflineTtsConfig(JNIEnv *env, jobject config,
                                             bool *ok) {
@@ -23,27 +131,19 @@ static OfflineTtsConfig GetOfflineTtsConfig(JNIEnv *env, jobject config,
   jobject model = env->GetObjectField(config, fid);
   jclass model_config_cls = env->GetObjectClass(model);
 
+  // vits
   fid = env->GetFieldID(model_config_cls, "vits",
                         "Lcom/k2fsa/sherpa/onnx/OfflineTtsVitsModelConfig;");
   jobject vits = env->GetObjectField(model, fid);
   jclass vits_cls = env->GetObjectClass(vits);
 
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.vits.model, model, vits_cls, vits);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.vits.lexicon, lexicon, vits_cls, vits);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.vits.tokens, tokens, vits_cls, vits);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.vits.data_dir, dataDir, vits_cls, vits);
-
-  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.vits.noise_scale, noiseScale, vits_cls,
-                             vits);
-
-  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.vits.noise_scale_w, noiseScaleW,
-                             vits_cls, vits);
-
-  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.vits.length_scale, lengthScale, vits_cls,
-                             vits);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.vits.model,        model,      vits_cls, vits);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.vits.lexicon,      lexicon,    vits_cls, vits);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.vits.tokens,       tokens,     vits_cls, vits);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.vits.data_dir,     dataDir,    vits_cls, vits);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.vits.noise_scale,   noiseScale, vits_cls, vits);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.vits.noise_scale_w, noiseScaleW,vits_cls, vits);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.vits.length_scale,  lengthScale,vits_cls, vits);
 
   // matcha
   fid = env->GetFieldID(model_config_cls, "matcha",
@@ -51,51 +151,27 @@ static OfflineTtsConfig GetOfflineTtsConfig(JNIEnv *env, jobject config,
   jobject matcha = env->GetObjectField(model, fid);
   jclass matcha_cls = env->GetObjectClass(matcha);
 
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.acoustic_model, acousticModel,
-                              matcha_cls, matcha);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.acoustic_model, acousticModel, matcha_cls, matcha);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.vocoder,        vocoder,       matcha_cls, matcha);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.lexicon,        lexicon,       matcha_cls, matcha);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.tokens,         tokens,        matcha_cls, matcha);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.data_dir,       dataDir,       matcha_cls, matcha);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.matcha.noise_scale,     noiseScale,    matcha_cls, matcha);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.matcha.length_scale,    lengthScale,   matcha_cls, matcha);
 
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.vocoder, vocoder, matcha_cls,
-                              matcha);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.lexicon, lexicon, matcha_cls,
-                              matcha);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.tokens, tokens, matcha_cls,
-                              matcha);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.matcha.data_dir, dataDir, matcha_cls,
-                              matcha);
-
-  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.matcha.noise_scale, noiseScale,
-                             matcha_cls, matcha);
-
-  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.matcha.length_scale, lengthScale,
-                             matcha_cls, matcha);
-
+  // kokoro
   fid = env->GetFieldID(model_config_cls, "kokoro",
                         "Lcom/k2fsa/sherpa/onnx/OfflineTtsKokoroModelConfig;");
   jobject kokoro = env->GetObjectField(model, fid);
   jclass kokoro_cls = env->GetObjectClass(kokoro);
 
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.model, model, kokoro_cls,
-                              kokoro);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.voices, voices, kokoro_cls,
-                              kokoro);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.tokens, tokens, kokoro_cls,
-                              kokoro);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.lexicon, lexicon, kokoro_cls,
-                              kokoro);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.lang, lang, kokoro_cls, kokoro);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.data_dir, dataDir, kokoro_cls,
-                              kokoro);
-
-  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.kokoro.length_scale, lengthScale,
-                             kokoro_cls, kokoro);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.model,        model,       kokoro_cls, kokoro);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.voices,       voices,      kokoro_cls, kokoro);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.tokens,       tokens,      kokoro_cls, kokoro);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.lexicon,      lexicon,     kokoro_cls, kokoro);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.lang,         lang,        kokoro_cls, kokoro);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kokoro.data_dir,     dataDir,     kokoro_cls, kokoro);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.kokoro.length_scale,  lengthScale, kokoro_cls, kokoro);
 
   // kitten
   fid = env->GetFieldID(model_config_cls, "kitten",
@@ -103,42 +179,91 @@ static OfflineTtsConfig GetOfflineTtsConfig(JNIEnv *env, jobject config,
   jobject kitten = env->GetObjectField(model, fid);
   jclass kitten_cls = env->GetObjectClass(kitten);
 
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kitten.model, model, kitten_cls,
-                              kitten);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kitten.model,       model,       kitten_cls, kitten);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kitten.voices,      voices,      kitten_cls, kitten);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kitten.tokens,      tokens,      kitten_cls, kitten);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.kitten.data_dir,    dataDir,     kitten_cls, kitten);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.kitten.length_scale, lengthScale, kitten_cls, kitten);
 
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kitten.voices, voices, kitten_cls,
-                              kitten);
+  // model config top-level fields
+  SHERPA_ONNX_JNI_READ_INT(ans.model.num_threads, numThreads, model_config_cls, model);
+  SHERPA_ONNX_JNI_READ_BOOL(ans.model.debug,     debug,      model_config_cls, model);
+  SHERPA_ONNX_JNI_READ_STRING(ans.model.provider, provider,  model_config_cls, model);
 
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kitten.tokens, tokens, kitten_cls,
-                              kitten);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.kitten.data_dir, dataDir, kitten_cls,
-                              kitten);
-
-  SHERPA_ONNX_JNI_READ_FLOAT(ans.model.kitten.length_scale, lengthScale,
-                             kitten_cls, kitten);
-
-  SHERPA_ONNX_JNI_READ_INT(ans.model.num_threads, numThreads, model_config_cls,
-                           model);
-
-  SHERPA_ONNX_JNI_READ_BOOL(ans.model.debug, debug, model_config_cls, model);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.model.provider, provider, model_config_cls,
-                              model);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.rule_fsts, ruleFsts, cls, config);
-
-  SHERPA_ONNX_JNI_READ_STRING(ans.rule_fars, ruleFars, cls, config);
-
-  SHERPA_ONNX_JNI_READ_INT(ans.max_num_sentences, maxNumSentences, cls, config);
-
-  SHERPA_ONNX_JNI_READ_FLOAT(ans.silence_scale, silenceScale, cls, config);
+  // OfflineTtsConfig top-level fields
+  SHERPA_ONNX_JNI_READ_STRING(ans.rule_fsts,         ruleFsts,        cls, config);
+  SHERPA_ONNX_JNI_READ_STRING(ans.rule_fars,         ruleFars,        cls, config);
+  SHERPA_ONNX_JNI_READ_INT(ans.max_num_sentences,    maxNumSentences, cls, config);
+  SHERPA_ONNX_JNI_READ_FLOAT(ans.silence_scale,      silenceScale,    cls, config);
 
   *ok = true;
   return ans;
 }
 
+// ── Audio helpers ─────────────────────────────────────────────────────────────
+// CreateAudioObject: constructs a Java GeneratedAudio(float[], int) object.
+// CallCallback:      invokes the Kotlin (FloatArray) -> Int lambda safely.
+
+static jobject CreateAudioObject(JNIEnv *env,
+                                 const std::vector<float> &samples,
+                                 int32_t sample_rate) {
+  jfloatArray samples_arr = env->NewFloatArray(samples.size());
+  env->SetFloatArrayRegion(samples_arr, 0, samples.size(), samples.data());
+
+  jclass gen_audio_cls =
+      env->FindClass("com/k2fsa/sherpa/onnx/GeneratedAudio");
+  if (!gen_audio_cls) {
+    env->DeleteLocalRef(samples_arr);
+    return nullptr;
+  }
+
+  jmethodID ctor = env->GetMethodID(gen_audio_cls, "<init>", "([FI)V");
+  if (!ctor) {
+    env->DeleteLocalRef(samples_arr);
+    env->DeleteLocalRef(gen_audio_cls);
+    return nullptr;
+  }
+
+  jobject obj = env->NewObject(gen_audio_cls, ctor, samples_arr, sample_rate);
+
+  env->DeleteLocalRef(samples_arr);
+  env->DeleteLocalRef(gen_audio_cls);
+  return obj;
+}
+
+static int32_t CallCallback(JNIEnv *env, jobject callback,
+                            jfloatArray samples_arr) {
+  if (!callback) return 1;
+
+  jclass cls = env->GetObjectClass(callback);
+  if (env->ExceptionCheck()) { env->DeleteLocalRef(cls); return 1; }
+
+  jmethodID invoke_mid =
+      env->GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;");
+  if (env->ExceptionCheck() || !invoke_mid) {
+    env->DeleteLocalRef(cls);
+    return 1;
+  }
+
+  jobject result = env->CallObjectMethod(callback, invoke_mid, samples_arr);
+  if (env->ExceptionCheck() || !result) {
+    env->DeleteLocalRef(cls);
+    return 1;
+  }
+
+  jclass integer_cls  = env->GetObjectClass(result);
+  jmethodID int_val_mid = env->GetMethodID(integer_cls, "intValue", "()I");
+  jint ret = env->CallIntMethod(result, int_val_mid);
+
+  env->DeleteLocalRef(integer_cls);
+  env->DeleteLocalRef(result);
+  env->DeleteLocalRef(cls);
+  return ret;
+}
+
 }  // namespace sherpa_onnx
+
+// ── JNI exported functions ────────────────────────────────────────────────────
 
 SHERPA_ONNX_EXTERN_C
 JNIEXPORT jlong JNICALL Java_com_k2fsa_sherpa_onnx_OfflineTts_newFromAsset(
@@ -153,15 +278,21 @@ JNIEXPORT jlong JNICALL Java_com_k2fsa_sherpa_onnx_OfflineTts_newFromAsset(
 
   bool ok = false;
   auto config = sherpa_onnx::GetOfflineTtsConfig(env, _config, &ok);
-
   if (!ok) {
     SHERPA_ONNX_LOGE("Please read the error message carefully");
     return 0;
   }
 
-  auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
-  for (const auto &s : str_vec) {
-    SHERPA_ONNX_LOGE("%s", s.c_str());
+  // Only log config when debug is enabled — avoids 40+ log calls per synthesis
+  if (config.model.debug) {
+#if __ANDROID_API__
+    auto str_vec = sherpa_onnx::SplitString(config.ToString(), 128);
+    for (const auto &s : str_vec) {
+      SHERPA_ONNX_LOGE("%s", s.c_str());
+    }
+#else
+    SHERPA_ONNX_LOGE("%s", config.ToString().c_str());
+#endif
   }
 
   auto tts = new sherpa_onnx::OfflineTts(
@@ -170,7 +301,7 @@ JNIEXPORT jlong JNICALL Java_com_k2fsa_sherpa_onnx_OfflineTts_newFromAsset(
 #endif
       config);
 
-  return (jlong)tts;
+  return reinterpret_cast<jlong>(tts);
 }
 
 SHERPA_ONNX_EXTERN_C
@@ -181,18 +312,14 @@ JNIEXPORT jlong JNICALL Java_com_k2fsa_sherpa_onnx_OfflineTts_newFromFile(
       [&]() -> jlong {
         bool ok = false;
         auto config = sherpa_onnx::GetOfflineTtsConfig(env, _config, &ok);
-
         if (!ok) {
           SHERPA_ONNX_LOGE("Please read the error message carefully");
           return 0;
         }
-
-        SHERPA_ONNX_LOGE("config:\n%s", config.ToString().c_str());
-
         if (!config.Validate()) {
           SHERPA_ONNX_LOGE("Errors found in config!");
+          return 0;
         }
-
         auto tts = new sherpa_onnx::OfflineTts(config);
         return reinterpret_cast<jlong>(tts);
       },
@@ -217,132 +344,90 @@ JNIEXPORT jint JNICALL Java_com_k2fsa_sherpa_onnx_OfflineTts_getNumSpeakers(
   return reinterpret_cast<sherpa_onnx::OfflineTts *>(ptr)->NumSpeakers();
 }
 
+// generateImpl: blocking, no streaming callback.
+// Returns a GeneratedAudio Java object (float[], int).
 SHERPA_ONNX_EXTERN_C
-JNIEXPORT jobjectArray JNICALL
+JNIEXPORT jobject JNICALL
 Java_com_k2fsa_sherpa_onnx_OfflineTts_generateImpl(JNIEnv *env, jobject /*obj*/,
-                                                   jlong ptr, jstring text,
-                                                   jint sid, jfloat speed) {
+                                                    jlong ptr, jstring text,
+                                                    jint sid, jfloat speed) {
   const char *p_text = env->GetStringUTFChars(text, nullptr);
 
+  sherpa_onnx::GenerationConfig config;
+  config.sid   = sid;
+  config.speed = speed;
+
   auto audio = reinterpret_cast<sherpa_onnx::OfflineTts *>(ptr)->Generate(
-      p_text, sid, speed);
-
-  jfloatArray samples_arr = env->NewFloatArray(audio.samples.size());
-  env->SetFloatArrayRegion(samples_arr, 0, audio.samples.size(),
-                           audio.samples.data());
-
-  jobjectArray obj_arr = (jobjectArray)env->NewObjectArray(
-      2, env->FindClass("java/lang/Object"), nullptr);
-
-  env->SetObjectArrayElement(obj_arr, 0, samples_arr);
-  env->SetObjectArrayElement(obj_arr, 1, NewInteger(env, audio.sample_rate));
-
+      p_text, config);
   env->ReleaseStringUTFChars(text, p_text);
-  env->DeleteLocalRef(samples_arr);
 
-  return obj_arr;
+  return CreateAudioObject(env, audio.samples, audio.sample_rate);
 }
 
+// generateWithCallbackImpl: streaming — callback fired after each espeak sentence.
+// Returns a GeneratedAudio Java object containing the complete audio.
 SHERPA_ONNX_EXTERN_C
-JNIEXPORT jobjectArray JNICALL
+JNIEXPORT jobject JNICALL
 Java_com_k2fsa_sherpa_onnx_OfflineTts_generateWithCallbackImpl(
     JNIEnv *env, jobject /*obj*/, jlong ptr, jstring text, jint sid,
     jfloat speed, jobject callback) {
   const char *p_text = env->GetStringUTFChars(text, nullptr);
 
-  // FIX (Issue 4): the original fork's generateWithCallbackImpl was missing
-  // DeleteLocalRef calls for cls, jklass, and should_continue, causing a JNI
-  // local reference table overflow on long texts (>512 sentences).
-  std::function<int32_t(const float *, int32_t, float)> callback_wrapper =
-      [env, callback](const float *samples, int32_t n,
-                      float /*progress*/) -> int {
-    jclass cls = env->GetObjectClass(callback);
-
-    jmethodID mid = env->GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;");
-    if (mid == nullptr) {
-      SHERPA_ONNX_LOGE("Failed to get the callback. Ignore it.");
-      env->DeleteLocalRef(cls);
-      return 1;
-    }
-
-    jfloatArray samples_arr = env->NewFloatArray(n);
-    env->SetFloatArrayRegion(samples_arr, 0, n, samples);
-
-    jobject should_continue = env->CallObjectMethod(callback, mid, samples_arr);
-    jclass jklass = env->GetObjectClass(should_continue);
-    jmethodID int_value_mid = env->GetMethodID(jklass, "intValue", "()I");
-    jint ret = env->CallIntMethod(should_continue, int_value_mid);
-
-    // Clean up all local refs created in this callback invocation
-    env->DeleteLocalRef(samples_arr);
-    env->DeleteLocalRef(should_continue);
-    env->DeleteLocalRef(jklass);
-    env->DeleteLocalRef(cls);
-
-    return ret;
-  };
+  sherpa_onnx::GenerationConfig config;
+  config.sid   = sid;
+  config.speed = speed;
 
   auto tts = reinterpret_cast<sherpa_onnx::OfflineTts *>(ptr);
-  auto audio = tts->Generate(p_text, sid, speed, callback_wrapper);
+  sherpa_onnx::GeneratedAudio audio;
 
-  jfloatArray samples_arr = env->NewFloatArray(audio.samples.size());
-  env->SetFloatArrayRegion(samples_arr, 0, audio.samples.size(),
-                           audio.samples.data());
-
-  jobjectArray obj_arr = (jobjectArray)env->NewObjectArray(
-      2, env->FindClass("java/lang/Object"), nullptr);
-
-  env->SetObjectArrayElement(obj_arr, 0, samples_arr);
-  env->SetObjectArrayElement(obj_arr, 1, NewInteger(env, audio.sample_rate));
+  if (callback) {
+    std::function<int32_t(const float *, int32_t, float)> cb_wrapper =
+        [env, callback](const float *samples, int32_t n, float) -> int32_t {
+      jfloatArray arr = env->NewFloatArray(n);
+      env->SetFloatArrayRegion(arr, 0, n, samples);
+      int32_t ret = sherpa_onnx::CallCallback(env, callback, arr);
+      env->DeleteLocalRef(arr);
+      return ret;
+    };
+    audio = tts->Generate(p_text, config, cb_wrapper);
+  } else {
+    audio = tts->Generate(p_text, config, nullptr);
+  }
 
   env->ReleaseStringUTFChars(text, p_text);
-  env->DeleteLocalRef(samples_arr);
-
-  return obj_arr;
+  return CreateAudioObject(env, audio.samples, audio.sample_rate);
 }
 
-// generateStreamImpl is kept for source compatibility but is NOT referenced
-// by TtsService.kt in the fixed version (we use generateWithCallback instead,
-// which IS present in the published v1.12.15 JitPack AAR).
-// This function IS compiled into the custom .so built by the CI workflows,
-// but will never be called by the Kotlin layer through the AAR path.
+// generateWithConfigImpl: like generateWithCallbackImpl but takes a full
+// GenerationConfig, enabling per-call silenceScale override.
+// This function is called by generateWithConfigAndCallback() in the v1.12.34 AAR.
 SHERPA_ONNX_EXTERN_C
-JNIEXPORT void JNICALL
-Java_com_k2fsa_sherpa_onnx_OfflineTts_generateStreamImpl(
-    JNIEnv *env, jobject /*obj*/, jlong ptr, jstring text, jint sid,
-    jfloat speed, jobject callback) {
+JNIEXPORT jobject JNICALL
+Java_com_k2fsa_sherpa_onnx_OfflineTts_generateWithConfigImpl(
+    JNIEnv *env, jobject /*obj*/, jlong ptr, jstring text,
+    jobject _gen_config, jobject callback) {
   const char *p_text = env->GetStringUTFChars(text, nullptr);
-
-  std::function<int32_t(const float *, int32_t, float)> callback_wrapper =
-      [env, callback](const float *samples, int32_t n,
-                      float /*progress*/) -> int32_t {
-        jclass cls = env->GetObjectClass(callback);
-
-        jmethodID mid =
-            env->GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;");
-
-        jfloatArray samples_arr = env->NewFloatArray(n);
-        env->SetFloatArrayRegion(samples_arr, 0, n, samples);
-
-        jobject should_continue =
-            env->CallObjectMethod(callback, mid, samples_arr);
-        jclass jklass = env->GetObjectClass(should_continue);
-        jmethodID int_value_mid =
-            env->GetMethodID(jklass, "intValue", "()I");
-        jint ret = env->CallIntMethod(should_continue, int_value_mid);
-
-        env->DeleteLocalRef(samples_arr);
-        env->DeleteLocalRef(jklass);
-        env->DeleteLocalRef(should_continue);
-        env->DeleteLocalRef(cls);
-
-        return ret;
-      };
-
+  auto gen_config = sherpa_onnx::GetGenerationConfig(env, _gen_config);
   auto tts = reinterpret_cast<sherpa_onnx::OfflineTts *>(ptr);
-  tts->Generate(p_text, sid, speed, callback_wrapper);
+
+  sherpa_onnx::GeneratedAudio audio;
+
+  if (callback) {
+    std::function<int32_t(const float *, int32_t, float)> cb_wrapper =
+        [env, callback](const float *samples, int32_t n, float) -> int32_t {
+      jfloatArray arr = env->NewFloatArray(n);
+      env->SetFloatArrayRegion(arr, 0, n, samples);
+      int32_t ret = sherpa_onnx::CallCallback(env, callback, arr);
+      env->DeleteLocalRef(arr);
+      return ret;
+    };
+    audio = tts->Generate(p_text, gen_config, cb_wrapper);
+  } else {
+    audio = tts->Generate(p_text, gen_config, nullptr);
+  }
 
   env->ReleaseStringUTFChars(text, p_text);
+  return CreateAudioObject(env, audio.samples, audio.sample_rate);
 }
 
 SHERPA_ONNX_EXTERN_C
@@ -350,14 +435,12 @@ JNIEXPORT jboolean JNICALL Java_com_k2fsa_sherpa_onnx_GeneratedAudio_saveImpl(
     JNIEnv *env, jobject /*obj*/, jstring filename, jfloatArray samples,
     jint sample_rate) {
   const char *p_filename = env->GetStringUTFChars(filename, nullptr);
-
   jfloat *p = env->GetFloatArrayElements(samples, nullptr);
-  jsize n = env->GetArrayLength(samples);
+  jsize n   = env->GetArrayLength(samples);
 
   bool ok = sherpa_onnx::WriteWave(p_filename, sample_rate, p, n);
 
   env->ReleaseStringUTFChars(filename, p_filename);
   env->ReleaseFloatArrayElements(samples, p, JNI_ABORT);
-
   return ok;
 }
