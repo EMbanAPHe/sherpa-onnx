@@ -15,7 +15,7 @@ android {
         minSdk    = 21
         targetSdk = 34
         versionCode = 20260327
-        versionName = "1.12.15-fork"
+        versionName = "1.12.34-fork"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -56,7 +56,7 @@ android {
 dependencies {
     // The sherpa-onnx AAR is downloaded from GitHub releases by the CI workflow
     // into app/libs/ before assembleDebug runs. This avoids any JitPack dependency.
-    // For local dev builds, run: wget -P app/libs https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.15/sherpa-onnx-1.12.15.aar
+    // For local dev builds, run: wget -P app/libs https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.34/sherpa-onnx-1.12.34.aar
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 
     implementation("androidx.core:core-ktx:1.12.0")
