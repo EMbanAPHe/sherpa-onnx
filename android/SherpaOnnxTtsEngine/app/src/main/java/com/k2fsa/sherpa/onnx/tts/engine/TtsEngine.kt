@@ -153,6 +153,7 @@ object TtsEngine {
 
         val numThreads   = prefs.getNumThreads()
         val provider     = prefs.getProvider()
+        val silenceScale = prefs.getSilenceScale()
 
         Log.i(TAG, "initTts: threads=$numThreads provider=$provider")
 
@@ -174,13 +175,15 @@ object TtsEngine {
             isKitten          = isKitten,
         )
 
-        // Override the provider that getOfflineTtsConfig hardcodes.
+        // Override fields that getOfflineTtsConfig hardcodes.
         config.model.provider = provider
+        config.silenceScale   = silenceScale
 
         tts = OfflineTts(assetManager = assets, config = config)
         Log.i(TAG, "TTS ready: sampleRate=${tts!!.sampleRate()} " +
                 "speakers=${tts!!.numSpeakers()} " +
-                "threads=${config.model.numThreads} provider=${config.model.provider}")
+                "threads=${config.model.numThreads} provider=${config.model.provider} " +
+                "silenceScale=${config.silenceScale}")
     }
 
     private fun copyDataDir(context: Context, dataDir: String): String {

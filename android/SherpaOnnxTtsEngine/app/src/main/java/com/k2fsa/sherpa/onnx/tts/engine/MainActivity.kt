@@ -284,7 +284,7 @@ class MainActivity : ComponentActivity() {
                                     modifier   = Modifier.fillMaxWidth(),
                                 )
                                 Text(
-                                    "Controls silence at clause boundaries (lower = tighter). Takes effect immediately.",
+                                    "Controls silence at clause boundaries. Lower = tighter gaps. Tap Apply to take effect.",
                                     fontSize  = 11.sp,
                                     color     = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

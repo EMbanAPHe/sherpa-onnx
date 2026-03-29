@@ -3,7 +3,6 @@ package com.k2fsa.sherpa.onnx.tts.engine
 import PreferenceHelper
 import android.content.Intent
 import android.media.AudioFormat
-import com.k2fsa.sherpa.onnx.GenerationConfig
 import android.speech.tts.SynthesisCallback
 import android.speech.tts.SynthesisRequest
 import android.speech.tts.TextToSpeech
@@ -224,10 +223,6 @@ class TtsService : TextToSpeechService() {
         else
             TtsEngine.speed
 
-        // Read silenceScale fresh each call so UI changes take effect
-        // immediately without requiring an engine reinitialise.
-        val silenceScale = PreferenceHelper(applicationContext).getSilenceScale()
-
         // Split into short clauses so Kokoro never infers more than
         // MIN_CLAUSE_WORDS words at once.  This turns an 8-second silence
         // into ~1-2 seconds before first audio.
@@ -248,14 +243,10 @@ class TtsService : TextToSpeechService() {
                 for (clause in clauses) {
                     if (cancelled.get()) break
 
-                    val genConfig = GenerationConfig(
-                        silenceScale = silenceScale,
-                        speed        = effectiveSpeed,
-                        sid          = TtsEngine.speakerId,
-                    )
-                    tts.generateWithConfigAndCallback(
+                    tts.generateWithCallback(
                         text     = clause,
-                        config   = genConfig,
+                        sid      = TtsEngine.speakerId,
+                        speed    = effectiveSpeed,
                     ) { floatSamples ->
                         if (cancelled.get()) return@generateWithCallback 0
                         if (floatSamples.isEmpty()) return@generateWithCallback 1
