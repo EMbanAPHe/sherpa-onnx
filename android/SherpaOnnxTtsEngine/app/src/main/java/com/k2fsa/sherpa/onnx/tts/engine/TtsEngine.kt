@@ -151,8 +151,8 @@ object TtsEngine {
         speakerId          = prefs.getSid()
         useSystemRatePitch = prefs.getUseSystemRatePitch()
 
-        val numThreads = prefs.getNumThreads()
-        val provider   = prefs.getProvider()
+        val numThreads   = prefs.getNumThreads()
+        val provider     = prefs.getProvider()
 
         Log.i(TAG, "initTts: threads=$numThreads provider=$provider")
 

@@ -9,6 +9,7 @@ class PreferenceHelper(context: Context) {
     private val USE_SYSTEM_RATE_PITCH_KEY = "use_system_rate_pitch"
     private val NUM_THREADS_KEY          = "num_threads"
     private val PROVIDER_KEY             = "provider"
+    private val SILENCE_SCALE_KEY        = "silence_scale"
 
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -60,4 +61,17 @@ class PreferenceHelper(context: Context) {
 
     fun getProvider(): String =
         sharedPreferences.getString(PROVIDER_KEY, "cpu") ?: "cpu"
+
+    // ── Silence scale ────────────────────────────────────────────────────────
+    // Controls how much of Kokoro's natural inter-clause silence is kept.
+    // Applied at every clause boundary created by the text pre-splitter.
+    // Range: 0.05 (very tight) → 0.3 (relaxed).  Default 0.2 = sherpa default.
+    // Lower values reduce audible gaps at comma/semicolon splits but can make
+    // boundary transitions sound slightly clipped.
+
+    fun setSilenceScale(value: Float) =
+        sharedPreferences.edit().putFloat(SILENCE_SCALE_KEY, value).apply()
+
+    fun getSilenceScale(): Float =
+        sharedPreferences.getFloat(SILENCE_SCALE_KEY, 0.2f)
 }

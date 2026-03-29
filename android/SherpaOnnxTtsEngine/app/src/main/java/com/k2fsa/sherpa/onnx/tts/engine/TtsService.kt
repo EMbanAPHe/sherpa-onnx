@@ -1,7 +1,9 @@
 package com.k2fsa.sherpa.onnx.tts.engine
 
+import PreferenceHelper
 import android.content.Intent
 import android.media.AudioFormat
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import android.speech.tts.SynthesisCallback
 import android.speech.tts.SynthesisRequest
 import android.speech.tts.TextToSpeech
@@ -123,6 +125,25 @@ class TtsService : TextToSpeechService() {
         super.onCreate()
         onLoadLanguage(TtsEngine.lang, "", "")
         if (TtsEngine.lang2 != null) onLoadLanguage(TtsEngine.lang2, "", "")
+        // Warm up ONNX Runtime so JIT compilation happens at startup rather
+        // than on the user's first sentence.  Runs on a daemon thread so it
+        // does not block the service coming online.
+        Thread {
+            try {
+                TtsEngine.tts?.let { engine ->
+                    Log.i(TAG, "Warm-up inference starting")
+                    engine.generateWithCallback(
+                        text     = WARMUP_TEXT,
+                        sid      = 0,
+                        speed    = 1.0f,
+                        callback = { _ -> 0 }   // discard all output
+                    )
+                    Log.i(TAG, "Warm-up inference complete")
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "Warm-up failed (non-fatal): ${t.message}")
+            }
+        }.apply { isDaemon = true; name = "SherpaTtsWarmup" }.start()
     }
 
     override fun onDestroy() {
@@ -203,8 +224,12 @@ class TtsService : TextToSpeechService() {
         else
             TtsEngine.speed
 
+        // Read silenceScale fresh each call so UI changes take effect
+        // immediately without requiring an engine reinitialise.
+        val silenceScale = PreferenceHelper(applicationContext).getSilenceScale()
+
         // Split into short clauses so Kokoro never infers more than
-        // MAX_CLAUSE_WORDS words at once.  This turns an 8-second silence
+        // MIN_CLAUSE_WORDS words at once.  This turns an 8-second silence
         // into ~1-2 seconds before first audio.
         val clauses = splitIntoClauses(text)
         Log.i(TAG, "onSynthesizeText: ${clauses.size} clause(s), speed=$effectiveSpeed")
@@ -223,10 +248,14 @@ class TtsService : TextToSpeechService() {
                 for (clause in clauses) {
                     if (cancelled.get()) break
 
-                    tts.generateWithCallback(
-                        text  = clause,
-                        sid   = TtsEngine.speakerId,
-                        speed = effectiveSpeed,
+                    val genConfig = GenerationConfig(
+                        silenceScale = silenceScale,
+                        speed        = effectiveSpeed,
+                        sid          = TtsEngine.speakerId,
+                    )
+                    tts.generateWithConfigAndCallback(
+                        text     = clause,
+                        config   = genConfig,
                     ) { floatSamples ->
                         if (cancelled.get()) return@generateWithCallback 0
                         if (floatSamples.isEmpty()) return@generateWithCallback 1
@@ -311,10 +340,17 @@ class TtsService : TextToSpeechService() {
          * Minimum number of words a clause must contain before we split on
          * soft punctuation (, ; : — …).
          *
-         * 6 words ≈ ~1.5 seconds of audio at normal speed — short enough to
-         * start playback quickly, long enough to avoid over-chopping phrases
-         * like "Yes, I see." into two fragments.
+         * 4 words ≈ ~1.2 seconds of audio at normal speed — short enough to
+         * start playback quickly, long enough to avoid splitting phrases like
+         * "Yes, I see." (3 words, below threshold) into two fragments.
          */
-        private const val MIN_CLAUSE_WORDS = 6
+        private const val MIN_CLAUSE_WORDS = 4
+
+        /**
+         * Short text used to warm up ONNX Runtime on startup.
+         * Must be non-empty and long enough to exercise all model layers.
+         * The output is discarded; callback immediately returns 0 (stop).
+         */
+        private const val WARMUP_TEXT = "Hello."
     }
 }

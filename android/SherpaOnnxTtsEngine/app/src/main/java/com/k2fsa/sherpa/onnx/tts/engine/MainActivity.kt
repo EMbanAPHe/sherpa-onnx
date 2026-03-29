@@ -265,6 +265,32 @@ class MainActivity : ComponentActivity() {
 
                                 Spacer(Modifier.height(8.dp))
 
+                                // Silence scale slider
+                                var silenceScale by remember {
+                                    mutableStateOf(preferenceHelper.getSilenceScale())
+                                }
+                                Text(
+                                    "Silence scale  ${String.format("%.2f", silenceScale)}",
+                                    fontSize = 13.sp,
+                                )
+                                Slider(
+                                    value         = silenceScale,
+                                    onValueChange = {
+                                        silenceScale = it
+                                        preferenceHelper.setSilenceScale(it)
+                                    },
+                                    valueRange = 0.05f..0.30f,
+                                    steps      = 4,   // 0.05, 0.10, 0.15, 0.20, 0.25, 0.30
+                                    modifier   = Modifier.fillMaxWidth(),
+                                )
+                                Text(
+                                    "Controls silence at clause boundaries (lower = tighter). Takes effect immediately.",
+                                    fontSize  = 11.sp,
+                                    color     = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+
+                                Spacer(Modifier.height(8.dp))
+
                                 // Apply / reinitialise button
                                 var reinitialising by remember { mutableStateOf(false) }
                                 Row(
