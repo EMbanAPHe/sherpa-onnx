@@ -9,7 +9,9 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
@@ -29,7 +31,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenuItem
@@ -68,8 +69,6 @@ import kotlin.time.TimeSource
 
 const val TAG = "sherpa-onnx-tts-engine"
 
-// ── Data for the dropdown options ─────────────────────────────────────────────
-
 private val THREAD_OPTIONS = listOf(
     1 to "1 thread  (single big core)",
     2 to "2 threads (both big cores — often fastest)",
@@ -81,8 +80,6 @@ private val PROVIDER_OPTIONS = listOf(
     "xnnpack" to "XNNPack  (NEON vectorised, ~10-30% faster)",
     "nnapi"   to "NNAPI  (NPU/GPU — requires android-27 build)",
 )
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 class MainActivity : ComponentActivity() {
     private val ttsViewModel: TtsViewModel by viewModels()
@@ -101,6 +98,7 @@ class MainActivity : ComponentActivity() {
         initAudioTrack()
 
         val preferenceHelper = PreferenceHelper(this)
+        applyPlaybackParams(preferenceHelper)
 
         setContent {
             SherpaOnnxTtsEngineTheme {
@@ -136,11 +134,13 @@ class MainActivity : ComponentActivity() {
                                     .padding(16.dp)
                             ) {
 
-                                // ── Speed ─────────────────────────────────────
-                                Text("Speed  ${String.format("%.1f", TtsEngine.speed)}")
+                                // ── Speed slider ──────────────────────────────
+                                var speed by remember { mutableStateOf(preferenceHelper.getSpeed()) }
+                                Text("Speed  ${String.format("%.1f", speed)}")
                                 Slider(
-                                    value         = TtsEngine.speedState.value,
+                                    value         = speed,
                                     onValueChange = {
+                                        speed = it
                                         TtsEngine.speed = it
                                         preferenceHelper.setSpeed(it)
                                     },
@@ -148,20 +148,24 @@ class MainActivity : ComponentActivity() {
                                     modifier   = Modifier.fillMaxWidth(),
                                 )
 
-                                // ── System speed/pitch ────────────────────────
+                                // ── System speed toggle ───────────────────────
+                                var useSystemSpeed by remember {
+                                    mutableStateOf(preferenceHelper.getUseSystemSpeed())
+                                }
                                 Row(
                                     modifier          = Modifier.fillMaxWidth().padding(top = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        "Allow system speed/pitch",
+                                        "Use system speed (VAR / app speed setting)",
                                         modifier = Modifier.weight(1f),
                                     )
                                     Switch(
-                                        checked         = TtsEngine.useSystemRatePitchState.value,
+                                        checked         = useSystemSpeed,
                                         onCheckedChange = { checked ->
-                                            TtsEngine.useSystemRatePitch = checked
-                                            preferenceHelper.setUseSystemRatePitch(checked)
+                                            useSystemSpeed = checked
+                                            TtsEngine.useSystemSpeed = checked
+                                            preferenceHelper.setUseSystemSpeed(checked)
                                         },
                                     )
                                 }
@@ -170,7 +174,182 @@ class MainActivity : ComponentActivity() {
                                 Divider()
                                 Spacer(Modifier.height(12.dp))
 
-                                // ── Performance settings ──────────────────────
+                                // ── Pitch slider ──────────────────────────────
+                                // Pitch is applied to the app's AudioTrack via PlaybackParams.
+                                // It affects the in-app test player only, not VAR's output.
+                                var pitch by remember { mutableStateOf(preferenceHelper.getPitch()) }
+                                Text("Pitch  ${String.format("%.2f", pitch)}")
+                                Slider(
+                                    value         = pitch,
+                                    onValueChange = {
+                                        pitch = it
+                                        preferenceHelper.setPitch(it)
+                                        applyPlaybackParams(preferenceHelper)
+                                    },
+                                    valueRange = 0.5f..2.0f,
+                                    steps      = 5,
+                                    modifier   = Modifier.fillMaxWidth(),
+                                )
+
+                                // ── System pitch toggle ───────────────────────
+                                var useSystemPitch by remember {
+                                    mutableStateOf(preferenceHelper.getUseSystemPitch())
+                                }
+                                Row(
+                                    modifier          = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "Use system pitch",
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Switch(
+                                        checked         = useSystemPitch,
+                                        onCheckedChange = { checked ->
+                                            useSystemPitch = checked
+                                            preferenceHelper.setUseSystemPitch(checked)
+                                            applyPlaybackParams(preferenceHelper)
+                                        },
+                                    )
+                                }
+                                Text(
+                                    "Pitch applies to the in-app test player only, not to VAR or other TTS apps.",
+                                    fontSize = 11.sp,
+                                    color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
+
+                                Spacer(Modifier.height(12.dp))
+                                Divider()
+                                Spacer(Modifier.height(12.dp))
+
+                                // ── Speaker ID (multi-speaker models only) ─────
+                                val numSpeakers = TtsEngine.tts!!.numSpeakers()
+                                if (numSpeakers > 1) {
+                                    OutlinedTextField(
+                                        value         = TtsEngine.speakerIdState.value.toString(),
+                                        onValueChange = {
+                                            TtsEngine.speakerId =
+                                                if (it.isBlank()) 0
+                                                else try { it.toInt() } catch (_: NumberFormatException) { 0 }
+                                            preferenceHelper.setSid(TtsEngine.speakerId)
+                                        },
+                                        label           = { Text("Speaker ID  (0-${numSpeakers - 1})") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier        = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 12.dp)
+                                            .wrapContentHeight(),
+                                    )
+                                }
+
+                                // ── Test text ─────────────────────────────────
+                                val testTextContent = getSampleText(TtsEngine.lang ?: "")
+                                var testText     by remember { mutableStateOf(testTextContent) }
+                                var startEnabled by remember { mutableStateOf(true) }
+                                var playEnabled  by remember { mutableStateOf(false) }
+                                var rtfText      by remember { mutableStateOf("") }
+
+                                OutlinedTextField(
+                                    value         = testText,
+                                    onValueChange = { testText = it },
+                                    label         = { Text("Test text") },
+                                    maxLines      = 10,
+                                    modifier      = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 12.dp)
+                                        .wrapContentHeight(),
+                                    singleLine    = false,
+                                )
+
+                                // ── Start / Play / Stop ───────────────────────
+                                Row {
+                                    Button(
+                                        enabled  = startEnabled,
+                                        modifier = Modifier.padding(5.dp),
+                                        onClick  = {
+                                            if (testText.isBlank()) {
+                                                Toast.makeText(applicationContext,
+                                                    "Please enter some text first",
+                                                    Toast.LENGTH_SHORT).show()
+                                                return@Button
+                                            }
+                                            startEnabled = false
+                                            playEnabled  = false
+                                            stopped      = false
+                                            track.pause(); track.flush(); track.play()
+                                            rtfText = ""
+
+                                            scope.launch {
+                                                for (samples in samplesChannel) {
+                                                    if (samples.isEmpty()) break
+                                                    track.write(samples, 0, samples.size,
+                                                        AudioTrack.WRITE_BLOCKING)
+                                                    if (stopped) break
+                                                }
+                                                while (!samplesChannel.isEmpty) {
+                                                    samplesChannel.tryReceive().getOrNull()
+                                                }
+                                            }
+
+                                            CoroutineScope(Dispatchers.Default).launch {
+                                                val t0    = TimeSource.Monotonic.markNow()
+                                                val audio = TtsEngine.tts!!.generateWithCallback(
+                                                    text     = testText,
+                                                    sid      = TtsEngine.speakerId,
+                                                    speed    = TtsEngine.speed,
+                                                    callback = ::callback,
+                                                )
+                                                val elapsed  = t0.elapsedNow().inWholeMilliseconds / 1000f
+                                                val duration = audio.samples.size /
+                                                    TtsEngine.tts!!.sampleRate().toFloat()
+                                                val cfg = TtsEngine.tts!!.config.model
+                                                val rtf = String.format(
+                                                    "Provider: %s   Threads: %d\n" +
+                                                    "Elapsed: %.3f s   Audio: %.3f s   RTF: %.3f",
+                                                    cfg.provider.uppercase(), cfg.numThreads,
+                                                    elapsed, duration, elapsed / duration,
+                                                )
+                                                scope.launch { samplesChannel.send(FloatArray(0)) }
+
+                                                val wav = application.filesDir.absolutePath + "/generated.wav"
+                                                val ok  = audio.samples.isNotEmpty() && audio.save(wav)
+                                                if (ok) withContext(Dispatchers.Main) {
+                                                    startEnabled = true
+                                                    playEnabled  = true
+                                                    rtfText      = rtf
+                                                }
+                                            }
+                                        },
+                                    ) { Text("Start") }
+
+                                    Button(
+                                        modifier = Modifier.padding(5.dp),
+                                        enabled  = playEnabled,
+                                        onClick  = {
+                                            stopped = true
+                                            track.pause(); track.flush()
+                                            onClickPlay()
+                                        },
+                                    ) { Text("Play") }
+
+                                    Button(
+                                        modifier = Modifier.padding(5.dp),
+                                        onClick  = { onClickStop(); startEnabled = true },
+                                    ) { Text("Stop") }
+                                }
+
+                                if (rtfText.isNotEmpty()) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(rtfText, fontSize = 13.sp,
+                                        modifier = Modifier.padding(bottom = 8.dp))
+                                }
+
+                                Spacer(Modifier.height(12.dp))
+                                Divider()
+                                Spacer(Modifier.height(12.dp))
+
+                                // ── Performance (bottom section) ───────────────
                                 Text(
                                     "Performance",
                                     fontWeight = FontWeight.SemiBold,
@@ -265,7 +444,7 @@ class MainActivity : ComponentActivity() {
 
                                 Spacer(Modifier.height(8.dp))
 
-                                // Silence scale slider
+                                // Silence scale
                                 var silenceScale by remember {
                                     mutableStateOf(preferenceHelper.getSilenceScale())
                                 }
@@ -280,7 +459,7 @@ class MainActivity : ComponentActivity() {
                                         preferenceHelper.setSilenceScale(it)
                                     },
                                     valueRange = 0.05f..0.30f,
-                                    steps      = 4,   // 0.05, 0.10, 0.15, 0.20, 0.25, 0.30
+                                    steps      = 4,
                                     modifier   = Modifier.fillMaxWidth(),
                                 )
                                 Text(
@@ -291,7 +470,7 @@ class MainActivity : ComponentActivity() {
 
                                 Spacer(Modifier.height(8.dp))
 
-                                // Apply / reinitialise button
+                                // Apply & Reinitialise
                                 var reinitialising by remember { mutableStateOf(false) }
                                 Row(
                                     modifier          = Modifier.fillMaxWidth(),
@@ -303,15 +482,13 @@ class MainActivity : ComponentActivity() {
                                         onClick  = {
                                             reinitialising = true
                                             stopped = true
-                                            track.pause()
-                                            track.flush()
+                                            track.pause(); track.flush()
                                             CoroutineScope(Dispatchers.IO).launch {
                                                 TtsEngine.reinitialize(applicationContext)
                                                 withContext(Dispatchers.Main) {
-                                                    // Reset AudioTrack to match new sample rate
-                                                    // (can change if switching models — defensive)
                                                     track.release()
                                                     initAudioTrack()
+                                                    applyPlaybackParams(preferenceHelper)
                                                     reinitialising = false
                                                     Toast.makeText(
                                                         applicationContext,
@@ -322,150 +499,20 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                         },
-                                    ) {
-                                        Text("Apply & Reinitialise Engine")
-                                    }
+                                    ) { Text("Apply & Reinitialise Engine") }
                                     if (reinitialising) {
                                         Spacer(Modifier.padding(start = 8.dp))
-                                        CircularProgressIndicator(modifier = Modifier.padding(start = 8.dp))
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.padding(start = 8.dp))
                                     }
                                 }
-
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    "Tip: tap Apply after changing threads or provider, then use Start below to measure RTF.",
+                                    "Tap Apply after changing threads, provider, or silence scale.",
                                     fontSize = 11.sp,
                                     color    = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-
-                                Spacer(Modifier.height(12.dp))
-                                Divider()
-                                Spacer(Modifier.height(12.dp))
-
-                                // ── Speaker ID (multi-speaker models only) ─────
-                                val numSpeakers = TtsEngine.tts!!.numSpeakers()
-                                if (numSpeakers > 1) {
-                                    OutlinedTextField(
-                                        value         = TtsEngine.speakerIdState.value.toString(),
-                                        onValueChange = {
-                                            TtsEngine.speakerId =
-                                                if (it.isBlank()) 0
-                                                else try { it.toInt() } catch (_: NumberFormatException) { 0 }
-                                            preferenceHelper.setSid(TtsEngine.speakerId)
-                                        },
-                                        label           = { Text("Speaker ID  (0–${numSpeakers - 1})") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier        = Modifier
-                                            .fillMaxWidth()
-                                            .padding(bottom = 12.dp)
-                                            .wrapContentHeight(),
-                                    )
-                                }
-
-                                // ── Test text input ───────────────────────────
-                                val testTextContent = getSampleText(TtsEngine.lang ?: "")
-                                var testText     by remember { mutableStateOf(testTextContent) }
-                                var startEnabled by remember { mutableStateOf(true) }
-                                var playEnabled  by remember { mutableStateOf(false) }
-                                var rtfText      by remember { mutableStateOf("") }
-
-                                OutlinedTextField(
-                                    value         = testText,
-                                    onValueChange = { testText = it },
-                                    label         = { Text("Test text") },
-                                    maxLines      = 10,
-                                    modifier      = Modifier
-                                        .fillMaxWidth()
-                                        .padding(bottom = 12.dp)
-                                        .wrapContentHeight(),
-                                    singleLine    = false,
-                                )
-
-                                // ── Play / Stop / RTF buttons ─────────────────
-                                Row {
-                                    Button(
-                                        enabled  = startEnabled,
-                                        modifier = Modifier.padding(5.dp),
-                                        onClick  = {
-                                            if (testText.isBlank()) {
-                                                Toast.makeText(applicationContext,
-                                                    "Please enter some text first",
-                                                    Toast.LENGTH_SHORT).show()
-                                                return@Button
-                                            }
-                                            startEnabled = false
-                                            playEnabled  = false
-                                            stopped      = false
-                                            track.pause(); track.flush(); track.play()
-                                            rtfText = ""
-
-                                            scope.launch {
-                                                for (samples in samplesChannel) {
-                                                    if (samples.isEmpty()) break
-                                                    track.write(samples, 0, samples.size,
-                                                        AudioTrack.WRITE_BLOCKING)
-                                                    if (stopped) break
-                                                }
-                                                while (!samplesChannel.isEmpty) {
-                                                    samplesChannel.tryReceive().getOrNull()
-                                                }
-                                            }
-
-                                            CoroutineScope(Dispatchers.Default).launch {
-                                                val t0    = TimeSource.Monotonic.markNow()
-                                                val audio = TtsEngine.tts!!.generateWithCallback(
-                                                    text     = testText,
-                                                    sid      = TtsEngine.speakerId,
-                                                    speed    = TtsEngine.speed,
-                                                    callback = ::callback,
-                                                )
-                                                val elapsed  = t0.elapsedNow().inWholeMilliseconds / 1000f
-                                                val duration = audio.samples.size /
-                                                    TtsEngine.tts!!.sampleRate().toFloat()
-                                                val cfg = TtsEngine.tts!!.config.model
-                                                val rtf = String.format(
-                                                    "Provider: %s   Threads: %d\n" +
-                                                    "Elapsed: %.3f s   Audio: %.3f s   RTF: %.3f",
-                                                    cfg.provider.uppercase(), cfg.numThreads,
-                                                    elapsed, duration, elapsed / duration,
-                                                )
-                                                scope.launch { samplesChannel.send(FloatArray(0)) }
-
-                                                val wav = application.filesDir.absolutePath + "/generated.wav"
-                                                val ok  = audio.samples.isNotEmpty() && audio.save(wav)
-                                                if (ok) withContext(Dispatchers.Main) {
-                                                    startEnabled = true
-                                                    playEnabled  = true
-                                                    rtfText      = rtf
-                                                }
-                                            }
-                                        },
-                                    ) { Text("Start") }
-
-                                    Button(
-                                        modifier = Modifier.padding(5.dp),
-                                        enabled  = playEnabled,
-                                        onClick  = {
-                                            stopped = true
-                                            track.pause(); track.flush()
-                                            onClickPlay()
-                                        },
-                                    ) { Text("Play") }
-
-                                    Button(
-                                        modifier = Modifier.padding(5.dp),
-                                        onClick  = { onClickStop(); startEnabled = true },
-                                    ) { Text("Stop") }
-                                }
-
-                                if (rtfText.isNotEmpty()) {
-                                    Spacer(Modifier.height(8.dp))
-                                    Text(
-                                        rtfText,
-                                        fontSize = 13.sp,
-                                        modifier = Modifier.padding(bottom = 8.dp),
-                                    )
-                                }
+                                Spacer(Modifier.height(16.dp))
                             }
                         }
                     }
@@ -478,6 +525,26 @@ class MainActivity : ComponentActivity() {
         stopMediaPlayer()
         if (::track.isInitialized) track.release()
         super.onDestroy()
+    }
+
+    /**
+     * Apply pitch to the app's own AudioTrack via PlaybackParams (API 23+).
+     * Reads the current pitch preference; if system pitch is enabled this is
+     * still the stored value (we store system pitch passthrough as a preference
+     * flag but apply it when the AudioTrack is live).
+     */
+    private fun applyPlaybackParams(prefs: PreferenceHelper) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ::track.isInitialized) {
+            val pitchValue = prefs.getPitch()
+            try {
+                track.playbackParams = PlaybackParams()
+                    .setPitch(pitchValue)
+                    .setSpeed(1.0f)
+                    .allowDefaults()
+            } catch (e: Exception) {
+                Log.w(TAG, "PlaybackParams failed: ${e.message}")
+            }
+        }
     }
 
     private fun stopMediaPlayer() {

@@ -3,18 +3,20 @@ import android.content.SharedPreferences
 
 class PreferenceHelper(context: Context) {
 
-    private val PREFS_NAME               = "com.k2fsa.sherpa.onnx.tts.engine"
-    private val SPEED_KEY                = "speed"
-    private val SID_KEY                  = "speaker_id"
-    private val USE_SYSTEM_RATE_PITCH_KEY = "use_system_rate_pitch"
-    private val NUM_THREADS_KEY          = "num_threads"
-    private val PROVIDER_KEY             = "provider"
-    private val SILENCE_SCALE_KEY        = "silence_scale"
+    private val PREFS_NAME                = "com.k2fsa.sherpa.onnx.tts.engine"
+    private val SPEED_KEY                 = "speed"
+    private val SID_KEY                   = "speaker_id"
+    private val USE_SYSTEM_SPEED_KEY      = "use_system_speed"
+    private val PITCH_KEY                 = "pitch"
+    private val USE_SYSTEM_PITCH_KEY      = "use_system_pitch"
+    private val NUM_THREADS_KEY           = "num_threads"
+    private val PROVIDER_KEY              = "provider"
+    private val SILENCE_SCALE_KEY         = "silence_scale"
 
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    // ── Speed ────────────────────────────────────────────────────────────────
+    // ── Speed ─────────────────────────────────────────────────────────────────
 
     fun setSpeed(value: Float) =
         sharedPreferences.edit().putFloat(SPEED_KEY, value).apply()
@@ -22,7 +24,39 @@ class PreferenceHelper(context: Context) {
     fun getSpeed(): Float =
         sharedPreferences.getFloat(SPEED_KEY, 1.0f)
 
-    // ── Speaker ID ───────────────────────────────────────────────────────────
+    // ── System speed pass-through ────────────────────────────────────────────
+    // When true: use speechRate from the calling app (e.g. VAR speed setting).
+    // When false: use the in-app speed slider value.
+
+    fun setUseSystemSpeed(value: Boolean) =
+        sharedPreferences.edit().putBoolean(USE_SYSTEM_SPEED_KEY, value).apply()
+
+    fun getUseSystemSpeed(): Boolean =
+        sharedPreferences.getBoolean(USE_SYSTEM_SPEED_KEY, true)
+
+    // ── Pitch ─────────────────────────────────────────────────────────────────
+    // Applied to the app's own AudioTrack via PlaybackParams (API 23+).
+    // Range: 0.5 (half pitch) → 2.0 (double pitch).  Default 1.0 = normal.
+    // Note: pitch cannot be applied to VAR's audio output; it controls the
+    // in-app test playback only.
+
+    fun setPitch(value: Float) =
+        sharedPreferences.edit().putFloat(PITCH_KEY, value).apply()
+
+    fun getPitch(): Float =
+        sharedPreferences.getFloat(PITCH_KEY, 1.0f)
+
+    // ── System pitch pass-through ────────────────────────────────────────────
+    // When true: use speechPitchRate from the calling app for test playback.
+    // When false: use the in-app pitch slider value for test playback.
+
+    fun setUseSystemPitch(value: Boolean) =
+        sharedPreferences.edit().putBoolean(USE_SYSTEM_PITCH_KEY, value).apply()
+
+    fun getUseSystemPitch(): Boolean =
+        sharedPreferences.getBoolean(USE_SYSTEM_PITCH_KEY, true)
+
+    // ── Speaker ID ────────────────────────────────────────────────────────────
 
     fun setSid(value: Int) =
         sharedPreferences.edit().putInt(SID_KEY, value).apply()
@@ -30,19 +64,7 @@ class PreferenceHelper(context: Context) {
     fun getSid(): Int =
         sharedPreferences.getInt(SID_KEY, 0)
 
-    // ── System speed/pitch pass-through ──────────────────────────────────────
-
-    fun setUseSystemRatePitch(value: Boolean) =
-        sharedPreferences.edit().putBoolean(USE_SYSTEM_RATE_PITCH_KEY, value).apply()
-
-    fun getUseSystemRatePitch(): Boolean =
-        sharedPreferences.getBoolean(USE_SYSTEM_RATE_PITCH_KEY, false)
-
-    // ── Thread count ─────────────────────────────────────────────────────────
-    // Default 4 matches getOfflineTtsConfig's automatic choice for Kokoro/Kitten.
-    // 1 or 2 threads often outperform 4 on big.LITTLE devices because ONNX
-    // won't schedule work onto slow efficiency cores.
-    // Valid values: 1, 2, 4
+    // ── Thread count ──────────────────────────────────────────────────────────
 
     fun setNumThreads(value: Int) =
         sharedPreferences.edit().putInt(NUM_THREADS_KEY, value).apply()
@@ -50,11 +72,7 @@ class PreferenceHelper(context: Context) {
     fun getNumThreads(): Int =
         sharedPreferences.getInt(NUM_THREADS_KEY, 4)
 
-    // ── Execution provider ───────────────────────────────────────────────────
-    // "cpu"     — plain ONNX CPU (safe, always works)
-    // "xnnpack" — Google XNNPack (NEON vectorised CPU, ~10-30% faster, no risk)
-    // "nnapi"   — Android NNAPI (may route to NPU/GPU; requires android-27 build;
-    //             falls back to CPU automatically if unsupported)
+    // ── Execution provider ────────────────────────────────────────────────────
 
     fun setProvider(value: String) =
         sharedPreferences.edit().putString(PROVIDER_KEY, value).apply()
@@ -62,12 +80,7 @@ class PreferenceHelper(context: Context) {
     fun getProvider(): String =
         sharedPreferences.getString(PROVIDER_KEY, "cpu") ?: "cpu"
 
-    // ── Silence scale ────────────────────────────────────────────────────────
-    // Controls how much of Kokoro's natural inter-clause silence is kept.
-    // Applied at every clause boundary created by the text pre-splitter.
-    // Range: 0.05 (very tight) → 0.3 (relaxed).  Default 0.2 = sherpa default.
-    // Lower values reduce audible gaps at comma/semicolon splits but can make
-    // boundary transitions sound slightly clipped.
+    // ── Silence scale ─────────────────────────────────────────────────────────
 
     fun setSilenceScale(value: Float) =
         sharedPreferences.edit().putFloat(SILENCE_SCALE_KEY, value).apply()

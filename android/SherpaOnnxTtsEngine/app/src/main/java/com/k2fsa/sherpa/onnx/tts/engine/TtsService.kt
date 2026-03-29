@@ -1,6 +1,5 @@
 package com.k2fsa.sherpa.onnx.tts.engine
 
-import PreferenceHelper
 import android.content.Intent
 import android.media.AudioFormat
 import android.speech.tts.SynthesisCallback
@@ -45,6 +44,7 @@ class TtsService : TextToSpeechService() {
 
     @Volatile private var currentCancelled: AtomicBoolean? = null
     @Volatile private var currentQueue: LinkedBlockingQueue<QueueItem>? = null
+
 
     // ── Text pre-splitting ────────────────────────────────────────────────────
 
@@ -218,10 +218,17 @@ class TtsService : TextToSpeechService() {
 
         if (text.isBlank()) { callback.done(); return }
 
-        val effectiveSpeed = if (TtsEngine.useSystemRatePitch)
-            (request.speechRate / 100.0f).coerceIn(0.2f, 3.0f)
-        else
-            TtsEngine.speed
+        // Speed: when "Use system speed" is ON, honour the calling app's
+        // speechRate (e.g. VAR's own speed setting; Android maps 100 → 1.0×).
+        // When OFF, use the in-app speed slider.  runCatching is defensive;
+        // getSpeechRate() is available since API 21 and will not throw here.
+        val effectiveSpeed = run {
+            val rate = runCatching { request.speechRate }.getOrDefault(-1)
+            if (TtsEngine.useSystemSpeed && rate > 0)
+                (rate / 100.0f).coerceIn(MIN_TTS_SPEED, MAX_TTS_SPEED)
+            else
+                TtsEngine.speed
+        }
 
         // Split into short clauses so Kokoro never infers more than
         // MIN_CLAUSE_WORDS words at once.  This turns an 8-second silence

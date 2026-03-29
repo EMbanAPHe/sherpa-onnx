@@ -30,7 +30,7 @@ object TtsEngine {
 
     val speedState:              MutableState<Float>   = mutableFloatStateOf(1.0F)
     val speakerIdState:          MutableState<Int>     = mutableIntStateOf(0)
-    val useSystemRatePitchState: MutableState<Boolean> = mutableStateOf(false)
+    val useSystemSpeedState:     MutableState<Boolean> = mutableStateOf(true)
 
     var speed: Float
         get() = speedState.value
@@ -40,9 +40,9 @@ object TtsEngine {
         get() = speakerIdState.value
         set(value) { speakerIdState.value = value }
 
-    var useSystemRatePitch: Boolean
-        get() = useSystemRatePitchState.value
-        set(value) { useSystemRatePitchState.value = value }
+    var useSystemSpeed: Boolean
+        get() = useSystemSpeedState.value
+        set(value) { useSystemSpeedState.value = value }
 
     private var modelDir:          String? = null
     private var modelName:         String? = null
@@ -149,7 +149,7 @@ object TtsEngine {
         val prefs = PreferenceHelper(context)
         speed              = prefs.getSpeed()
         speakerId          = prefs.getSid()
-        useSystemRatePitch = prefs.getUseSystemRatePitch()
+        useSystemSpeed     = prefs.getUseSystemSpeed()
 
         val numThreads   = prefs.getNumThreads()
         val provider     = prefs.getProvider()
@@ -177,13 +177,15 @@ object TtsEngine {
 
         // Override fields that getOfflineTtsConfig hardcodes.
         config.model.provider = provider
+        config.model.debug    = false  // AAR hardcodes true; disable to eliminate
+                                       // ~40 fprintf+logcat calls per synthesis
         config.silenceScale   = silenceScale
 
         tts = OfflineTts(assetManager = assets, config = config)
         Log.i(TAG, "TTS ready: sampleRate=${tts!!.sampleRate()} " +
                 "speakers=${tts!!.numSpeakers()} " +
                 "threads=${config.model.numThreads} provider=${config.model.provider} " +
-                "silenceScale=${config.silenceScale}")
+                "silenceScale=${config.silenceScale} debug=${config.model.debug}")
     }
 
     private fun copyDataDir(context: Context, dataDir: String): String {
