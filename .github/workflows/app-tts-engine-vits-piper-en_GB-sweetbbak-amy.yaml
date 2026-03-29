@@ -48,6 +48,15 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}
 
+      # Patch the hardcoded onnxruntime version in the build script
+      # from 1.17.1 (original fork) to 1.23.2 (current master).
+      # ORT 1.23.2 improves ARM memory allocation and kernel dispatch.
+      - name: Patch onnxruntime version
+        run: |
+          set -euxo pipefail
+          sed -i 's/onnxruntime_version=1.17.1/onnxruntime_version=1.23.2/' \n            build-android-arm64-v8a.sh
+          grep onnxruntime_version build-android-arm64-v8a.sh | head -1
+
       - name: Build JNI library (arm64-v8a)
         run: |
           set -euxo pipefail
@@ -66,9 +75,9 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p android/SherpaOnnxTtsEngine/app/libs
-          wget -q --show-progress "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.15/sherpa-onnx-1.12.15.aar" \
-            -O android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.15.aar
-          echo "AAR: $(du -h android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.15.aar)"
+          wget -q --show-progress "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.34/sherpa-onnx-1.12.34.aar" \
+            -O android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.34.aar
+          echo "AAR: $(du -h android/SherpaOnnxTtsEngine/app/libs/sherpa-onnx-1.12.34.aar)"
 
       - name: Download model
         run: |
