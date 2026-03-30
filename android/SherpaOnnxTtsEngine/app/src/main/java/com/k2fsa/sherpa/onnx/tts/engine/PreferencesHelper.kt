@@ -12,6 +12,7 @@ class PreferenceHelper(context: Context) {
     private val NUM_THREADS_KEY           = "num_threads"
     private val PROVIDER_KEY              = "provider"
     private val SILENCE_SCALE_KEY         = "silence_scale"
+    private val MIN_CLAUSE_WORDS_KEY      = "min_clause_words"
 
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
