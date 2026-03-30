@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "sherpa-onnx/csrc/offline-tts-model-config.h"
@@ -63,6 +64,15 @@ struct GeneratedAudio {
   GeneratedAudio ScaleSilence(float scale) const;
 };
 
+// Per-call configuration for Generate().
+// Allows overriding silence_scale, speed, and sid without reinitialising
+// the TTS engine.
+struct GenerationConfig {
+  float silence_scale = 0.2f;  // scale applied to silence intervals
+  float speed = 1.0f;          // speech speed factor
+  int32_t sid = 0;             // speaker ID for multi-speaker models
+};
+
 class OfflineTtsImpl;
 
 // If the callback returns 0, then it stops generating
@@ -93,6 +103,12 @@ class OfflineTts {
   //                 returns. The callback is called in the current thread.
   GeneratedAudio Generate(const std::string &text, int64_t sid = 0,
                           float speed = 1.0,
+                          GeneratedAudioCallback callback = nullptr) const;
+
+  // Convenience overload accepting a GenerationConfig.
+  // Bridges to Generate(text, sid, speed, callback).
+  GeneratedAudio Generate(const std::string &text,
+                          const GenerationConfig &config,
                           GeneratedAudioCallback callback = nullptr) const;
 
   // @param text The string to be synthesized.

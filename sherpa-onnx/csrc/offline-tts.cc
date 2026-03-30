@@ -171,6 +171,21 @@ OfflineTts::OfflineTts(Manager *mgr, const OfflineTtsConfig &config)
 
 OfflineTts::~OfflineTts() = default;
 
+// Bridge overload: converts GenerationConfig into the legacy (sid, speed) call.
+// This lets the JNI use GenerationConfig (for per-call silenceScale etc.)
+// without requiring changes throughout the impl layer.
+GeneratedAudio OfflineTts::Generate(
+    const std::string &text, const GenerationConfig &config,
+    GeneratedAudioCallback callback /*= nullptr*/) const {
+  // Apply per-call silence scale: synthesise first, then scale silence.
+  auto audio = impl_->Generate(text, config.sid, config.speed,
+                               std::move(callback));
+  if (config.silence_scale != 1.0f) {
+    audio = audio.ScaleSilence(config.silence_scale);
+  }
+  return audio;
+}
+
 GeneratedAudio OfflineTts::Generate(
     const std::string &text, int64_t sid /*=0*/, float speed /*= 1.0*/,
     GeneratedAudioCallback callback /*= nullptr*/) const {
