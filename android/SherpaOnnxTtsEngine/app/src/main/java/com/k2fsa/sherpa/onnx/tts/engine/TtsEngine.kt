@@ -180,6 +180,7 @@ object TtsEngine {
                                        // ~40 fprintf+logcat calls per synthesis
 
         tts = OfflineTts(assetManager = assets, config = config)
+        assets = null  // release AssetManager ref; OfflineTts holds its own internally
         Log.i(TAG, "TTS ready: sampleRate=${tts!!.sampleRate()} " +
                 "speakers=${tts!!.numSpeakers()} " +
                 "threads=${config.model.numThreads} provider=${config.model.provider} " +
@@ -189,7 +190,7 @@ object TtsEngine {
     private fun copyDataDir(context: Context, dataDir: String): String {
         Log.i(TAG, "Copying data dir: $dataDir")
         copyAssets(context, dataDir)
-        return context.getExternalFilesDir(null)!!.absolutePath
+        return (context.getExternalFilesDir(null) ?: context.filesDir).absolutePath
     }
 
     private fun copyAssets(context: Context, path: String) {
@@ -198,7 +199,7 @@ object TtsEngine {
             if (list.isEmpty()) {
                 copyFile(context, path)
             } else {
-                File("${context.getExternalFilesDir(null)}/$path").mkdirs()
+                File("${(context.getExternalFilesDir(null) ?: context.filesDir)}/$path").mkdirs()
                 for (asset in list) {
                     copyAssets(context, if (path.isEmpty()) asset else "$path/$asset")
                 }
@@ -210,7 +211,8 @@ object TtsEngine {
 
     private fun copyFile(context: Context, filename: String) {
         try {
-            val dest = "${context.getExternalFilesDir(null)}/$filename"
+            val dest = "${(context.getExternalFilesDir(null) ?: context.filesDir)}/$filename"
+            if (File(dest).exists()) return  // skip: already extracted on a prior boot
             context.assets.open(filename).use { ins ->
                 FileOutputStream(dest).use { out ->
                     val buf = ByteArray(8192)

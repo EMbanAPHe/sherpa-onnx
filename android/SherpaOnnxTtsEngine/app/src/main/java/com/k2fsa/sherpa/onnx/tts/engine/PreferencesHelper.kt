@@ -87,7 +87,7 @@ class PreferenceHelper(context: Context) {
         sharedPreferences.edit().putFloat(SILENCE_SCALE_KEY, value).apply()
 
     fun getSilenceScale(): Float =
-        sharedPreferences.getFloat(SILENCE_SCALE_KEY, 0.2f)
+        sharedPreferences.getFloat(SILENCE_SCALE_KEY, 0.05f)
 
     // ── Clause split threshold ────────────────────────────────────────────────
     // Minimum words in a clause before splitting on soft punctuation (, ; : — …).

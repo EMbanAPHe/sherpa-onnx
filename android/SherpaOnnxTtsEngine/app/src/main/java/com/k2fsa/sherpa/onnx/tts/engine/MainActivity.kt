@@ -62,6 +62,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -292,7 +293,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
 
-                                            CoroutineScope(Dispatchers.Default).launch {
+                                            scope.launch(Dispatchers.Default) {
                                                 val t0    = TimeSource.Monotonic.markNow()
                                                 val audio = TtsEngine.tts!!.generateWithCallback(
                                                     text     = testText,
@@ -458,7 +459,7 @@ class MainActivity : ComponentActivity() {
                                         silenceScale = it
                                         preferenceHelper.setSilenceScale(it)
                                     },
-                                    valueRange = 0.05f..0.30f,
+                                    valueRange = 0.02f..0.30f,
                                     steps      = 4,
                                     modifier   = Modifier.fillMaxWidth(),
                                 )
@@ -509,7 +510,7 @@ class MainActivity : ComponentActivity() {
                                             reinitialising = true
                                             stopped = true
                                             track.pause(); track.flush()
-                                            CoroutineScope(Dispatchers.IO).launch {
+                                            scope.launch(Dispatchers.IO) {
                                                 TtsEngine.reinitialize(applicationContext)
                                                 withContext(Dispatchers.Main) {
                                                     track.release()
@@ -548,6 +549,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        scope.cancel()           // cancel all coroutines launched in this scope
+        samplesChannel.cancel()  // close channel and discard pending samples
         stopMediaPlayer()
         if (::track.isInitialized) track.release()
         super.onDestroy()

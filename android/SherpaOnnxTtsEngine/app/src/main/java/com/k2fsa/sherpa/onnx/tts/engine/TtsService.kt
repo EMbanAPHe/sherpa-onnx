@@ -243,7 +243,6 @@ class TtsService : TextToSpeechService() {
         // into ~1-2 seconds before first audio.
         val clauses = splitIntoClauses(text, prefs.getMinClauseWords())
         Log.i(TAG, "onSynthesizeText: ${clauses.size} clause(s), speed=$effectiveSpeed")
-        clauses.forEachIndexed { idx, c -> Log.i(TAG, "  clause[$idx]: \"$c\"") }
 
         val cancelled = AtomicBoolean(false)
         val queue     = LinkedBlockingQueue<QueueItem>(32)
@@ -271,12 +270,14 @@ class TtsService : TextToSpeechService() {
 
                         val frames   = floatSamples.size
                         val pcmBytes = ByteArray(frames * 2)
-                        var j = 0
+                        // Bulk float→int16 via NIO ShortBuffer (little-endian PCM).
+                        // Avoids per-sample byte-shift arithmetic in Kotlin/JVM.
+                        val shortBuf = java.nio.ByteBuffer.wrap(pcmBytes)
+                            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                            .asShortBuffer()
                         for (i in 0 until frames) {
-                            val s = (floatSamples[i] * 32767.0f).toInt().coerceIn(-32768, 32767)
-                            pcmBytes[j]     = (s and 0xff).toByte()
-                            pcmBytes[j + 1] = ((s ushr 8) and 0xff).toByte()
-                            j += 2
+                            shortBuf.put((floatSamples[i] * 32767.0f)
+                                .toInt().coerceIn(-32768, 32767).toShort())
                         }
 
                         try {
@@ -353,7 +354,7 @@ class TtsService : TextToSpeechService() {
          * start playback quickly, long enough to avoid splitting phrases like
          * "Yes, I see." (3 words, below threshold) into two fragments.
          */
-        private const val MIN_CLAUSE_WORDS = 4
+        private const val MIN_CLAUSE_WORDS = 6
 
         /**
          * Short text used to warm up ONNX Runtime on startup.
