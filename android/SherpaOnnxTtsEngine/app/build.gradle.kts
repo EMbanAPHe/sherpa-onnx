@@ -32,21 +32,18 @@ android {
     // Signing config — reads keystore from environment variables set by CI.
     // The keystore is decoded from ANDROID_KEYSTORE_BASE64 into a temp file,
     // then used to sign the release APK.
-    val ksBase64 = System.getenv("ANDROID_KEYSTORE_BASE64")
-    val ksPass   = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
-    val ksAlias  = System.getenv("ANDROID_KEY_ALIAS")         ?: ""
-    val ksKeyPass= System.getenv("ANDROID_KEY_ALIAS_PASSWORD") ?: ""
+    // Keystore is decoded from base64 by the CI workflow shell script before
+    // Gradle runs, and the resulting file path is passed via environment variable.
+    // This avoids Base64 decoding inside Gradle KTS (which has limited stdlib access).
+    val ksFile  = System.getenv("ANDROID_KEYSTORE_FILE")
+    val ksPass  = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+    val ksAlias = System.getenv("ANDROID_KEY_ALIAS")         ?: ""
+    val ksKeyPass = System.getenv("ANDROID_KEY_ALIAS_PASSWORD") ?: ""
 
     signingConfigs {
-        if (ksBase64 != null) {
+        if (ksFile != null) {
             create("release") {
-                // java.util.Base64 is available in Gradle scripts (unlike android.util.Base64)
-                val keystoreBytes = java.util.Base64.getDecoder().decode(ksBase64)
-                val keystoreFile  = File(project.buildDir, "release.p12")
-                keystoreFile.parentFile?.mkdirs()
-                keystoreFile.writeBytes(keystoreBytes)
-
-                storeFile     = keystoreFile
+                storeFile     = File(ksFile)
                 storePassword = ksPass
                 keyAlias      = ksAlias
                 keyPassword   = ksKeyPass
@@ -59,7 +56,7 @@ android {
             isMinifyEnabled   = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (ksBase64 != null) {
+            if (ksFile != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
