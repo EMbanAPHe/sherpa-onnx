@@ -115,19 +115,35 @@ jobs:
 
       - name: Build APK
         working-directory: android/SherpaOnnxTtsEngine
+        env:
+          ANDROID_KEYSTORE_BASE64:    ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD:  ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS:          ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_ALIAS_PASSWORD: ${{ secrets.ANDROID_KEY_ALIAS_PASSWORD }}
         run: |
           set -euxo pipefail
-          ./gradlew assembleDebug -PAPP_ID_SUFFIX="$APP_ID_SUFFIX"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            ./gradlew assembleRelease -PAPP_ID_SUFFIX="$APP_ID_SUFFIX"
+          else
+            ./gradlew assembleDebug   -PAPP_ID_SUFFIX="$APP_ID_SUFFIX"
+          fi
 
       - name: Rename APK
         run: |
           set -euxo pipefail
-          cd android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug
-          mv app-debug.apk "$APK_BASENAME.apk"
+          if [ -f android/SherpaOnnxTtsEngine/app/build/outputs/apk/release/app-release.apk ]; then
+            cd android/SherpaOnnxTtsEngine/app/build/outputs/apk/release
+            mv app-release.apk "$APK_BASENAME.apk"
+          else
+            cd android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug
+            mv app-debug.apk "$APK_BASENAME.apk"
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APK_BASENAME }}
-          path: android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/${{ env.APK_BASENAME }}.apk
+          path: |
+            android/SherpaOnnxTtsEngine/app/build/outputs/apk/release/${{ env.APK_BASENAME }}.apk
+            android/SherpaOnnxTtsEngine/app/build/outputs/apk/debug/${{ env.APK_BASENAME }}.apk
           if-no-files-found: error
