@@ -123,7 +123,12 @@ jobs:
         run: |
           set -euxo pipefail
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            # Decode the base64 keystore to a temp file in the workspace
+            KEYSTORE_PATH="$(pwd)/release.p12"
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+            export ANDROID_KEYSTORE_FILE="$KEYSTORE_PATH"
             ./gradlew assembleRelease -PAPP_ID_SUFFIX="$APP_ID_SUFFIX"
+            rm -f "$KEYSTORE_PATH"
           else
             ./gradlew assembleDebug   -PAPP_ID_SUFFIX="$APP_ID_SUFFIX"
           fi
