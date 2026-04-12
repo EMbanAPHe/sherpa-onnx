@@ -42,7 +42,7 @@ android {
             create("release") {
                 // Decode keystore from base64 into a temporary file
                 val keystoreBytes = android.util.Base64.decode(keystoreBase64, android.util.Base64.DEFAULT)
-                val keystoreFile  = java.io.File(project.buildDir, "release.keystore")
+                val keystoreFile  = java.io.File(project.buildDir, "release.p12")
                 keystoreFile.parentFile.mkdirs()
                 keystoreFile.writeBytes(keystoreBytes)
 
