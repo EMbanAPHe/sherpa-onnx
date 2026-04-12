@@ -29,10 +29,39 @@ android {
         buildConfigField("boolean", "TTSENGINE_IS_KITTEN",  "${prop("TTSENGINE_IS_KITTEN") == "true"}")
     }
 
+    // Signing config — reads keystore from environment variables set by CI.
+    // The keystore is decoded from ANDROID_KEYSTORE_BASE64 into a temp file,
+    // then used to sign the release APK.
+    val keystoreBase64 = System.getenv("ANDROID_KEYSTORE_BASE64")
+    val keystorePass   = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+    val keyAlias       = System.getenv("ANDROID_KEY_ALIAS")         ?: ""
+    val keyPass        = System.getenv("ANDROID_KEY_ALIAS_PASSWORD") ?: ""
+
+    signingConfigs {
+        if (keystoreBase64 != null) {
+            create("release") {
+                // Decode keystore from base64 into a temporary file
+                val keystoreBytes = android.util.Base64.decode(keystoreBase64, android.util.Base64.DEFAULT)
+                val keystoreFile  = java.io.File(project.buildDir, "release.keystore")
+                keystoreFile.parentFile.mkdirs()
+                keystoreFile.writeBytes(keystoreBytes)
+
+                storeFile     = keystoreFile
+                storePassword = keystorePass
+                keyAlias      = keyAlias
+                keyPassword   = keyPass
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled   = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keystoreBase64 != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

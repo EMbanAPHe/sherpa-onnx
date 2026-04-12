@@ -324,7 +324,7 @@ class TtsService : TextToSpeechService() {
                         synchronized(audioCache) { audioCache[it] }
                     }
                     if (cached != null) {
-                        Log.i(TAG, "Cache hit: ${clause.take(30)}")
+                        Log.i(TAG, "Cache hit (${clause.length} chars)")
                         try { queue.put(QueueItem.Data(cached, cached.size)) }
                         catch (_: InterruptedException) { break }
                         continue
