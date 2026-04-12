@@ -32,24 +32,24 @@ android {
     // Signing config — reads keystore from environment variables set by CI.
     // The keystore is decoded from ANDROID_KEYSTORE_BASE64 into a temp file,
     // then used to sign the release APK.
-    val keystoreBase64 = System.getenv("ANDROID_KEYSTORE_BASE64")
-    val keystorePass   = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
-    val keyAlias       = System.getenv("ANDROID_KEY_ALIAS")         ?: ""
-    val keyPass        = System.getenv("ANDROID_KEY_ALIAS_PASSWORD") ?: ""
+    val ksBase64 = System.getenv("ANDROID_KEYSTORE_BASE64")
+    val ksPass   = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+    val ksAlias  = System.getenv("ANDROID_KEY_ALIAS")         ?: ""
+    val ksKeyPass= System.getenv("ANDROID_KEY_ALIAS_PASSWORD") ?: ""
 
     signingConfigs {
-        if (keystoreBase64 != null) {
+        if (ksBase64 != null) {
             create("release") {
-                // Decode keystore from base64 into a temporary file
-                val keystoreBytes = android.util.Base64.decode(keystoreBase64, android.util.Base64.DEFAULT)
-                val keystoreFile  = java.io.File(project.buildDir, "release.p12")
-                keystoreFile.parentFile.mkdirs()
+                // java.util.Base64 is available in Gradle scripts (unlike android.util.Base64)
+                val keystoreBytes = java.util.Base64.getDecoder().decode(ksBase64)
+                val keystoreFile  = File(project.buildDir, "release.p12")
+                keystoreFile.parentFile?.mkdirs()
                 keystoreFile.writeBytes(keystoreBytes)
 
                 storeFile     = keystoreFile
-                storePassword = keystorePass
-                keyAlias      = keyAlias
-                keyPassword   = keyPass
+                storePassword = ksPass
+                keyAlias      = ksAlias
+                keyPassword   = ksKeyPass
             }
         }
     }
@@ -59,7 +59,7 @@ android {
             isMinifyEnabled   = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (keystoreBase64 != null) {
+            if (ksBase64 != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
