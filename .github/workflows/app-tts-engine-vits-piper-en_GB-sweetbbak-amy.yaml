@@ -113,6 +113,13 @@ jobs:
           python3 -c "import base64,os; exec(base64.b64decode('aW1wb3J0IHJlLCBzeXMsIG9zCmZuYW1lID0gc3lzLmFyZ3ZbMV0KbmFtZSA9IG9zLmVudmlyb25bIkFQUF9OQU1FIl0KYyA9IG9wZW4oZm5hbWUpLnJlYWQoKQpjID0gcmUuc3ViKHInPHN0cmluZyBuYW1lPSJhcHBfbmFtZSI+Lio/PC9zdHJpbmc+JywKICAgICAgICAgICAnPHN0cmluZyBuYW1lPSJhcHBfbmFtZSI+JyArIG5hbWUgKyAnPC9zdHJpbmc+JywgYykKb3BlbihmbmFtZSwgInciKS53cml0ZShjKQoK').decode())" "$STRINGS_FILE"
           echo "app_name set to $APP_NAME"
 
+      - name: Remove duplicate Tts.kt
+        run: |
+          # Tts.kt in source duplicates classes already in the v1.12.34 AAR.
+          # Release builds (mergeDexRelease) fail hard on duplicate classes;
+          # debug builds only warn. Remove the source copy so the AAR wins.
+          rm -f android/SherpaOnnxTtsEngine/app/src/main/java/com/k2fsa/sherpa/onnx/tts/engine/Tts.kt
+
       - name: Build APK
         working-directory: android/SherpaOnnxTtsEngine
         env:
