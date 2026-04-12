@@ -497,6 +497,67 @@ class MainActivity : ComponentActivity() {
 
                                 Spacer(Modifier.height(8.dp))
 
+                                // ── Feature toggles ───────────────────
+                                val toggleItems = listOf(
+                                    Triple("Sentence audio cache",
+                                           "Repeat sentences play instantly (~1-2 MB memory)",
+                                           preferenceHelper.getAudioCacheEnabled()),
+                                    Triple("RMS audio normalisation",
+                                           "Consistent volume, prevents clipping",
+                                           preferenceHelper.getRmsNormaliseEnabled()),
+                                    Triple("SSML tag stripping",
+                                           "Remove XML/SSML markup before synthesis",
+                                           preferenceHelper.getSsmlStripEnabled()),
+                                )
+                                var cacheEnabled by remember {
+                                    mutableStateOf(preferenceHelper.getAudioCacheEnabled()) }
+                                var rmsEnabled by remember {
+                                    mutableStateOf(preferenceHelper.getRmsNormaliseEnabled()) }
+                                var ssmlEnabled by remember {
+                                    mutableStateOf(preferenceHelper.getSsmlStripEnabled()) }
+
+                                listOf(
+                                    Triple("Sentence audio cache",
+                                           "Repeat sentences play instantly",
+                                           cacheEnabled to { v: Boolean ->
+                                               cacheEnabled = v
+                                               preferenceHelper.setAudioCacheEnabled(v)
+                                               if (!v) TtsEngine.clearAudioCache()
+                                           }),
+                                    Triple("RMS normalisation",
+                                           "Consistent volume, prevents clipping",
+                                           rmsEnabled to { v: Boolean ->
+                                               rmsEnabled = v
+                                               preferenceHelper.setRmsNormaliseEnabled(v)
+                                           }),
+                                    Triple("Strip SSML tags",
+                                           "Remove XML markup before synthesis",
+                                           ssmlEnabled to { v: Boolean ->
+                                               ssmlEnabled = v
+                                               preferenceHelper.setSsmlStripEnabled(v)
+                                           }),
+                                ).forEach { (title, subtitle, stateAndSetter) ->
+                                    val (state, setter) = stateAndSetter
+                                    Row(
+                                        modifier          = Modifier.fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(title, fontSize = 13.sp)
+                                            Text(subtitle, fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme
+                                                    .onSurfaceVariant)
+                                        }
+                                        Switch(
+                                            checked = state,
+                                            onCheckedChange = { setter(it) },
+                                        )
+                                    }
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
                                 // Apply & Reinitialise
                                 var reinitialising by remember { mutableStateOf(false) }
                                 Row(

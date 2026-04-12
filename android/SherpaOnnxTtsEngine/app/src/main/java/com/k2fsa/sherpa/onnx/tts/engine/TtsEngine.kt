@@ -18,12 +18,26 @@ const val MIN_TTS_SPEED = 0.2f
 const val MAX_TTS_SPEED = 3.0f
 object TtsEngine {
     private const val TAG = "TtsEngine"
+    private const val AUDIO_CACHE_MAX_ENTRIES = 20
 
     // The OfflineTts instance. TtsService captures a local reference at the
     // start of each synthesis call, so setting this to null mid-synthesis is
     // safe — the ongoing call completes with the old instance, and the next
     // call will pick up the freshly initialised one.
     @Volatile var tts: OfflineTts? = null
+
+    // Sentence audio cache — cleared when engine is reinitialised.
+    // TtsService writes/reads this; reinitialize() clears it.
+    // Thread-safe: all access synchronized on audioCache.
+    val audioCache: LinkedHashMap<String, ByteArray> =
+        object : LinkedHashMap<String, ByteArray>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<String, ByteArray>) =
+                size > AUDIO_CACHE_MAX_ENTRIES
+        }
+
+    fun clearAudioCache() {
+        synchronized(audioCache) { audioCache.clear() }
+    }
 
     var lang:  String? = null
     var lang2: String? = null
@@ -126,6 +140,7 @@ object TtsEngine {
         Log.i(TAG, "reinitialize: destroying old TTS instance")
         tts?.release()
         tts = null
+        clearAudioCache()  // cached audio is stale after settings change
         // Note: dataDirExtracted stays true — assets were already extracted to disk,
         // re-copying is unnecessary. initTts() reuses extractedDataDir directly.
         initTts(context)

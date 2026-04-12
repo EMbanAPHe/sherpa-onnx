@@ -13,6 +13,9 @@ class PreferenceHelper(context: Context) {
     private val PROVIDER_KEY              = "provider"
     private val SILENCE_SCALE_KEY         = "silence_scale"
     private val MIN_CLAUSE_WORDS_KEY      = "min_clause_words"
+    private val AUDIO_CACHE_KEY           = "audio_cache_enabled"
+    private val RMS_NORMALISE_KEY         = "rms_normalise_enabled"
+    private val SSML_STRIP_KEY            = "ssml_strip_enabled"
 
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -26,8 +29,6 @@ class PreferenceHelper(context: Context) {
         sharedPreferences.getFloat(SPEED_KEY, 1.0f)
 
     // ── System speed pass-through ────────────────────────────────────────────
-    // When true: use speechRate from the calling app (e.g. VAR speed setting).
-    // When false: use the in-app speed slider value.
 
     fun setUseSystemSpeed(value: Boolean) =
         sharedPreferences.edit().putBoolean(USE_SYSTEM_SPEED_KEY, value).apply()
@@ -36,10 +37,6 @@ class PreferenceHelper(context: Context) {
         sharedPreferences.getBoolean(USE_SYSTEM_SPEED_KEY, true)
 
     // ── Pitch ─────────────────────────────────────────────────────────────────
-    // Applied to the app's own AudioTrack via PlaybackParams (API 23+).
-    // Range: 0.5 (half pitch) → 2.0 (double pitch).  Default 1.0 = normal.
-    // Note: pitch cannot be applied to VAR's audio output; it controls the
-    // in-app test playback only.
 
     fun setPitch(value: Float) =
         sharedPreferences.edit().putFloat(PITCH_KEY, value).apply()
@@ -48,8 +45,6 @@ class PreferenceHelper(context: Context) {
         sharedPreferences.getFloat(PITCH_KEY, 1.0f)
 
     // ── System pitch pass-through ────────────────────────────────────────────
-    // When true: use speechPitchRate from the calling app for test playback.
-    // When false: use the in-app pitch slider value for test playback.
 
     fun setUseSystemPitch(value: Boolean) =
         sharedPreferences.edit().putBoolean(USE_SYSTEM_PITCH_KEY, value).apply()
@@ -90,13 +85,40 @@ class PreferenceHelper(context: Context) {
         sharedPreferences.getFloat(SILENCE_SCALE_KEY, 0.05f)
 
     // ── Clause split threshold ────────────────────────────────────────────────
-    // Minimum words in a clause before splitting on soft punctuation (, ; : — …).
-    // Lower = faster first audio but more prosody breaks; higher = fewer breaks.
-    // Range 3–7. Default 4.
 
     fun setMinClauseWords(value: Int) =
         sharedPreferences.edit().putInt(MIN_CLAUSE_WORDS_KEY, value).apply()
 
     fun getMinClauseWords(): Int =
-        sharedPreferences.getInt(MIN_CLAUSE_WORDS_KEY, 4)
+        sharedPreferences.getInt(MIN_CLAUSE_WORDS_KEY, 6)
+
+    // ── Sentence audio cache ──────────────────────────────────────────────────
+    // When enabled, synthesised sentences are cached in memory (up to 20 entries,
+    // ~1-2 MB).  Cache hits play instantly with zero synthesis time.
+
+    fun setAudioCacheEnabled(value: Boolean) =
+        sharedPreferences.edit().putBoolean(AUDIO_CACHE_KEY, value).apply()
+
+    fun getAudioCacheEnabled(): Boolean =
+        sharedPreferences.getBoolean(AUDIO_CACHE_KEY, true)
+
+    // ── RMS audio normalisation ───────────────────────────────────────────────
+    // Normalises each audio chunk to a consistent loudness level before playback.
+    // Prevents clipping on loud outputs and equalises volume across sentences.
+
+    fun setRmsNormaliseEnabled(value: Boolean) =
+        sharedPreferences.edit().putBoolean(RMS_NORMALISE_KEY, value).apply()
+
+    fun getRmsNormaliseEnabled(): Boolean =
+        sharedPreferences.getBoolean(RMS_NORMALISE_KEY, true)
+
+    // ── SSML tag stripping ────────────────────────────────────────────────────
+    // Removes XML/SSML markup tags from input text before synthesis so they are
+    // not spoken literally.
+
+    fun setSsmlStripEnabled(value: Boolean) =
+        sharedPreferences.edit().putBoolean(SSML_STRIP_KEY, value).apply()
+
+    fun getSsmlStripEnabled(): Boolean =
+        sharedPreferences.getBoolean(SSML_STRIP_KEY, true)
 }

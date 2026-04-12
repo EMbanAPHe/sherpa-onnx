@@ -9,116 +9,184 @@ import android.speech.tts.SynthesisRequest
 import android.speech.tts.TextToSpeech
 import android.speech.tts.TextToSpeechService
 import android.util.Log
+import java.text.Normalizer
+import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 /*
- * Why we split text before passing to Kokoro
- * ───────────────────────────────────────────
- * Kokoro's internal pipeline (via espeak) only splits on hard sentence-ending
- * punctuation: . ! ?
+ * Architecture overview
+ * ─────────────────────
+ * onSynthesizeText() splits the incoming text into clauses, then runs a
+ * producer/consumer pair:
  *
- * A single long sentence such as:
- *   "He walked down the long, winding road, past the old church, through
- *    the village, and into the fields beyond."
- * is treated as ONE inference job.  At RTF ≈ 0.855, a 10-second sentence
- * takes 8–10 seconds to infer.  No audio plays during that time — the user
- * hears complete silence between sentences.
+ *   Generator thread  — calls generateWithConfigAndCallback() per clause.
+ *                       Each C++ callback fires with a FloatArray of samples,
+ *                       which are RMS-normalised and converted to PCM and placed
+ *                       on the queue.
  *
- * Fix: splitIntoClauses() breaks the text on clause-level punctuation
- * (, ; : — …) when a clause exceeds MIN_CLAUSE_WORDS words.  Each clause
- * becomes a separate generateWithCallback() call.  The producer/consumer
- * queue plays clause N while clause N+1 is being inferred, so the gap before
- * the first audible sound is reduced from ~8s to ~1–2s and subsequent clauses
- * stream with no perceptible pause.
+ *   Consumer (caller thread) — drains the queue into audioAvailable(), which
+ *                       the Android TTS framework passes to the audio output.
  *
- * Prosody note: Kokoro adds natural silence at the start/end of every chunk,
- * so clause boundaries sound like a brief breath — acceptable for audiobooks.
+ * The generator runs on a persistent single-thread Executor so there is no
+ * per-sentence thread-creation overhead and synthesis calls are automatically
+ * serialised if somehow called concurrently.
+ *
+ * Production features enabled by default (all toggleable in Settings):
+ *   • Sentence audio cache  — LRU cache of up to 20 PCM chunks; repeat
+ *                             sentences play instantly.
+ *   • RMS normalisation     — each chunk is gain-adjusted to -21.9 dBFS so
+ *                             volume is consistent and clipping is prevented.
+ *   • SSML stripping        — removes XML/SSML markup before synthesis so
+ *                             tags are not spoken literally.
+ *
+ * Always-on (no toggle needed):
+ *   • Unicode NFKC normalisation — one-line text canonicalisation.
+ *   • Single-thread Executor     — replaces per-call Thread allocation.
  */
 
 class TtsService : TextToSpeechService() {
 
+    // ── Queue item types ──────────────────────────────────────────────────────
+
     private sealed class QueueItem {
         class Data(val bytes: ByteArray, val length: Int) : QueueItem()
-        object End : QueueItem()
+        object End  : QueueItem()
         class Error(val t: Throwable) : QueueItem()
     }
+
+    // ── State ─────────────────────────────────────────────────────────────────
 
     @Volatile private var currentCancelled: AtomicBoolean? = null
     @Volatile private var currentQueue: LinkedBlockingQueue<QueueItem>? = null
 
-    // Cached PreferenceHelper — initialised in onCreate, used in onSynthesizeText
-    // to read silenceScale per call without rebuilding SharedPreferences each time.
+    // Single-thread executor: replaces new Thread{} per synthesis call.
+    // Daemon threads don't block process exit.
+    private val generatorExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "SherpaTtsGenerator").also { it.isDaemon = true }
+    }
+
+    // Preferences — initialised once in onCreate.
     private lateinit var prefs: PreferenceHelper
 
+    // LRU audio cache lives in TtsEngine so reinitialize() can clear it.
+    // Access always via synchronized(TtsEngine.audioCache).
+    private val audioCache get() = TtsEngine.audioCache
 
-    // ── Text pre-splitting ────────────────────────────────────────────────────
+    // ── Text pre-processing ───────────────────────────────────────────────────
 
     /**
-     * Split [text] into clause-sized chunks so that Kokoro never has to infer
-     * more than ~MAX_CLAUSE_WORDS words at once.
+     * Strip SSML/XML tags from [text].
+     * Replaces each tag with a space; then collapses multiple spaces.
+     * Safe for plain text (regex only matches < followed by content then >).
+     */
+    private fun stripSsml(text: String): String {
+        val stripped = text.replace(Regex("<[^>]+>"), " ")
+        return stripped.replace(Regex("\\s{2,}"), " ").trim()
+    }
+
+    /**
+     * Apply Unicode NFKC normalisation and optional SSML stripping.
+     * NFKC converts ligatures, smart quotes, full-width chars, etc. so
+     * espeak-ng sees canonical ASCII/Unicode text.
+     */
+    private fun normaliseText(raw: String, ssmlStrip: Boolean): String {
+        val nfkc = Normalizer.normalize(raw, Normalizer.Form.NFKC)
+        return if (ssmlStrip && nfkc.contains('<')) stripSsml(nfkc) else nfkc
+    }
+
+    /**
+     * Split [text] into clause-sized chunks so Kokoro never infers more than
+     * ~[minClauseWords] words at once.
      *
      * Rules:
-     *  1. Always split on sentence-ending punctuation (. ! ?) — Kokoro would
-     *     have split here anyway; we keep it for correctness.
+     *  1. Always split on sentence-ending punctuation (. ! ?) — Kokoro's
+     *     internal espeak pipeline splits here anyway.
      *  2. Split on clause-level punctuation (, ; : — …) ONLY when the
-     *     accumulated word count since the last split >= MIN_CLAUSE_WORDS.
-     *     This avoids chopping "Hello, world." into two ridiculous fragments.
+     *     accumulated word count >= [minClauseWords].
      *  3. Never produce an empty chunk.
-     *  4. The original punctuation character is kept at the END of its chunk
-     *     so Kokoro's phonemiser applies the correct pause.
+     *  4. Punctuation is kept at the END of its chunk.
      */
     private fun splitIntoClauses(text: String, minClauseWords: Int = MIN_CLAUSE_WORDS): List<String> {
-        // Hard splits: . ! ?  (always split regardless of length)
-        // Soft splits: , ; : — …  (split only when clause is long enough)
         val hardSplit = setOf('.', '!', '?')
         val softSplit = setOf(',', ';', ':', '—', '…')
-
-        val chunks = mutableListOf<String>()
-        val current = StringBuilder()
-        var wordCount = 1  // first word has no preceding space
-        var i = 0
+        val chunks    = mutableListOf<String>()
+        val current   = StringBuilder()
+        var wordCount = 1
+        var i         = 0
 
         while (i < text.length) {
             val ch = text[i]
-
-            // Count words roughly by spaces
             if (ch == ' ' || ch == '\t' || ch == '\n') wordCount++
-
             current.append(ch)
 
-            val isHard = ch in hardSplit
-            val isSoft = ch in softSplit
+            val isHard    = ch in hardSplit
+            val isSoft    = ch in softSplit
+            val nextSpace = (i + 1 >= text.length) || text[i + 1].isWhitespace()
 
-            // Look ahead: after a split char there should be whitespace or end-of-string
-            // to avoid splitting "3.14" or "e.g."
-            val nextIsSpace = (i + 1 >= text.length) || text[i + 1].isWhitespace()
-
-            if ((isHard && nextIsSpace) ||
-                (isSoft && nextIsSpace && wordCount >= minClauseWords)) {
-
+            if ((isHard && nextSpace) ||
+                (isSoft && nextSpace && wordCount >= minClauseWords)) {
                 val chunk = current.toString().trim()
                 if (chunk.isNotEmpty()) chunks.add(chunk)
                 current.clear()
-                wordCount = 1  // reset to 1 for next clause
+                wordCount = 1
             }
-
             i++
         }
 
-        // Flush whatever is left (handles sentences that don't end with punctuation)
         val remainder = current.toString().trim()
         if (remainder.isNotEmpty()) {
-            if (chunks.isNotEmpty() && wordCount < minClauseWords) {
-                // Too short to stand alone — append to the previous chunk
+            if (chunks.isNotEmpty() && wordCount < minClauseWords)
                 chunks[chunks.lastIndex] = chunks.last() + " " + remainder
-            } else {
+            else
                 chunks.add(remainder)
-            }
         }
 
         return if (chunks.isEmpty()) listOf(text) else chunks
     }
+
+    // ── Audio processing ──────────────────────────────────────────────────────
+
+    /**
+     * RMS-normalise [samples] to [TARGET_RMS_DBFS].
+     * Skips near-silent chunks (avoids dividing by ~zero).
+     * Caps gain at [MAX_GAIN] to prevent over-amplifying noise.
+     * Returns the same array modified in-place for zero allocation.
+     */
+    private fun rmsNormalise(samples: FloatArray): FloatArray {
+        var sumSq = 0.0
+        for (s in samples) sumSq += s.toDouble() * s.toDouble()
+        val rms = sqrt(sumSq / samples.size).toFloat()
+
+        if (rms < RMS_FLOOR) return samples          // near-silent: skip
+
+        val gain = (TARGET_RMS / rms).coerceAtMost(MAX_GAIN)
+        if (kotlin.math.abs(gain - 1.0f) < 0.01f) return samples  // already close: skip
+
+        for (i in samples.indices) samples[i] = (samples[i] * gain).coerceIn(-1.0f, 1.0f)
+        return samples
+    }
+
+    /**
+     * Convert [floatSamples] to little-endian PCM-16 ByteArray via NIO.
+     * Clips each sample to [-1.0, 1.0] before conversion.
+     */
+    private fun floatToPcm16(floatSamples: FloatArray): ByteArray {
+        val pcm  = ByteArray(floatSamples.size * 2)
+        val buf  = java.nio.ByteBuffer.wrap(pcm)
+            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+        for (s in floatSamples) {
+            buf.put((s.coerceIn(-1.0f, 1.0f) * 32767.0f).toInt().toShort())
+        }
+        return pcm
+    }
+
+    /** Cache key encodes all parameters that affect the audio output. */
+    private fun cacheKey(text: String, speed: Float, sid: Int, silenceScale: Float) =
+        "${text.trim()}|${String.format("%.2f", speed)}|$sid|${String.format("%.3f", silenceScale)}"
 
     // ── TextToSpeechService overrides ─────────────────────────────────────────
 
@@ -128,9 +196,9 @@ class TtsService : TextToSpeechService() {
         prefs = PreferenceHelper(applicationContext)
         onLoadLanguage(TtsEngine.lang, "", "")
         if (TtsEngine.lang2 != null) onLoadLanguage(TtsEngine.lang2, "", "")
-        // Warm up ONNX Runtime so JIT compilation happens at startup rather
-        // than on the user's first sentence.  Runs on a daemon thread so it
-        // does not block the service coming online.
+
+        // Warm up ONNX Runtime on a daemon thread so the first real sentence
+        // doesn't pay the JIT compilation cost.
         Thread {
             try {
                 TtsEngine.tts?.let { engine ->
@@ -139,7 +207,7 @@ class TtsService : TextToSpeechService() {
                         text     = WARMUP_TEXT,
                         sid      = 0,
                         speed    = 1.0f,
-                        callback = { _ -> 0 }   // discard all output
+                        callback = { _ -> 0 }
                     )
                     Log.i(TAG, "Warm-up inference complete")
                 }
@@ -151,21 +219,20 @@ class TtsService : TextToSpeechService() {
 
     override fun onDestroy() {
         Log.i(TAG, "onDestroy tts service")
+        generatorExecutor.shutdownNow()
         super.onDestroy()
     }
 
     override fun onIsLanguageAvailable(
         _lang: String?, _country: String?, _variant: String?
     ): Int {
-        val requested = _lang ?: ""
-        val primary   = TtsEngine.lang ?: "eng"
-
+        val requested  = _lang ?: ""
+        val primary    = TtsEngine.lang ?: "eng"
         val normalised = when {
             requested.equals("eng", ignoreCase = true) -> "eng"
             requested.startsWith("en", ignoreCase = true) -> primary
             else -> requested
         }
-
         return if (normalised.equals(primary, ignoreCase = true) ||
                    (TtsEngine.lang2 != null &&
                     normalised.equals(TtsEngine.lang2, ignoreCase = true)))
@@ -183,11 +250,9 @@ class TtsService : TextToSpeechService() {
         Log.i(TAG, "onLoadLanguage: $_lang, $_country")
         val lang = _lang ?: ""
         return if (lang == TtsEngine.lang || lang == TtsEngine.lang2) {
-            Log.i(TAG, "creating tts for lang: $lang")
             TtsEngine.createTts(application)
             TextToSpeech.LANG_AVAILABLE
         } else {
-            Log.i(TAG, "lang $lang not supported; engine: ${TtsEngine.lang}, ${TtsEngine.lang2}")
             TextToSpeech.LANG_NOT_SUPPORTED
         }
     }
@@ -195,21 +260,26 @@ class TtsService : TextToSpeechService() {
     override fun onStop() {
         Log.i(TAG, "onStop()")
         currentCancelled?.set(true)
-        currentQueue?.let { q ->
-            q.clear()
-            q.offer(QueueItem.End)
-        }
+        currentQueue?.let { q -> q.clear(); q.offer(QueueItem.End) }
     }
 
     override fun onSynthesizeText(request: SynthesisRequest?, callback: SynthesisCallback?) {
         if (request == null || callback == null) return
 
-        val text = request.charSequenceText.toString()
+        // ── Read all preferences up-front (cheap SharedPrefs map lookups) ──
+        val cacheEnabled   = prefs.getAudioCacheEnabled()
+        val rmsEnabled     = prefs.getRmsNormaliseEnabled()
+        val ssmlEnabled    = prefs.getSsmlStripEnabled()
+        val silenceScale   = prefs.getSilenceScale()
+        val minClauseWords = prefs.getMinClauseWords()
+
+        // ── Text pre-processing ───────────────────────────────────────────────
+        val rawText = request.charSequenceText.toString()
+        val text    = normaliseText(rawText, ssmlEnabled)
 
         if (onIsLanguageAvailable(request.language, request.country, request.variant)
                 == TextToSpeech.LANG_NOT_SUPPORTED) {
-            callback.error()
-            return
+            callback.error(); return
         }
 
         val tts = TtsEngine.tts ?: run {
@@ -217,15 +287,10 @@ class TtsService : TextToSpeechService() {
             TtsEngine.tts ?: run { callback.error(); return }
         }
 
-        val sampleRate = tts.sampleRate()
-        callback.start(sampleRate, AudioFormat.ENCODING_PCM_16BIT, 1)
-
+        callback.start(tts.sampleRate(), AudioFormat.ENCODING_PCM_16BIT, 1)
         if (text.isBlank()) { callback.done(); return }
 
-        // Speed: when "Use system speed" is ON, honour the calling app's
-        // speechRate (e.g. VAR's own speed setting; Android maps 100 → 1.0×).
-        // When OFF, use the in-app speed slider.  runCatching is defensive;
-        // getSpeechRate() is available since API 21 and will not throw here.
+        // ── Speed ─────────────────────────────────────────────────────────────
         val effectiveSpeed = run {
             val rate = runCatching { request.speechRate }.getOrDefault(-1)
             if (TtsEngine.useSystemSpeed && rate > 0)
@@ -234,33 +299,44 @@ class TtsService : TextToSpeechService() {
                 TtsEngine.speed
         }
 
-        // Read silenceScale fresh each call so the slider takes effect
-        // on the next sentence without needing Apply & Reinitialise.
-        val silenceScale = prefs.getSilenceScale()
-
-        // Split into short clauses so Kokoro never infers more than
-        // minClauseWords words at once.  This turns an 8-second silence
-        // into ~1-2 seconds before first audio.
-        val clauses = splitIntoClauses(text, prefs.getMinClauseWords())
-        Log.i(TAG, "onSynthesizeText: ${clauses.size} clause(s), speed=$effectiveSpeed")
+        val sid    = TtsEngine.speakerId
+        val clauses = splitIntoClauses(text, minClauseWords)
+        Log.i(TAG, "onSynthesizeText: ${clauses.size} clause(s), speed=$effectiveSpeed " +
+                   "cache=$cacheEnabled rms=$rmsEnabled ssml=$ssmlEnabled")
 
         val cancelled = AtomicBoolean(false)
         val queue     = LinkedBlockingQueue<QueueItem>(32)
         currentCancelled = cancelled
         currentQueue     = queue
 
-        // Generator thread: iterates over clauses sequentially.
-        // Each generateWithCallback call fires the inner callback once per
-        // espeak-sentence inside the clause (usually just once).
-        val generatorThread = Thread {
+        // ── Generator (runs on persistent single-thread executor) ─────────────
+        generatorExecutor.submit {
             try {
                 for (clause in clauses) {
                     if (cancelled.get()) break
 
+                    val key = if (cacheEnabled)
+                        cacheKey(clause, effectiveSpeed, sid, silenceScale)
+                    else null
+
+                    // Cache hit: enqueue cached PCM directly, skip synthesis
+                    val cached: ByteArray? = key?.let {
+                        synchronized(audioCache) { audioCache[it] }
+                    }
+                    if (cached != null) {
+                        Log.i(TAG, "Cache hit: ${clause.take(30)}")
+                        try { queue.put(QueueItem.Data(cached, cached.size)) }
+                        catch (_: InterruptedException) { break }
+                        continue
+                    }
+
+                    // Cache miss: synthesise
+                    val chunkPcm = mutableListOf<ByteArray>()
+
                     tts.generateWithConfigAndCallback(
                         text   = clause,
-                        config = com.k2fsa.sherpa.onnx.GenerationConfig(
-                            sid          = TtsEngine.speakerId,
+                        config = GenerationConfig(
+                            sid          = sid,
                             speed        = effectiveSpeed,
                             silenceScale = silenceScale,
                         ),
@@ -268,25 +344,25 @@ class TtsService : TextToSpeechService() {
                         if (cancelled.get()) return@generateWithConfigAndCallback 0
                         if (floatSamples.isEmpty()) return@generateWithConfigAndCallback 1
 
-                        val frames   = floatSamples.size
-                        val pcmBytes = ByteArray(frames * 2)
-                        // Bulk float→int16 via NIO ShortBuffer (little-endian PCM).
-                        // Avoids per-sample byte-shift arithmetic in Kotlin/JVM.
-                        val shortBuf = java.nio.ByteBuffer.wrap(pcmBytes)
-                            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                            .asShortBuffer()
-                        for (i in 0 until frames) {
-                            shortBuf.put((floatSamples[i] * 32767.0f)
-                                .toInt().coerceIn(-32768, 32767).toShort())
-                        }
+                        val samples = if (rmsEnabled) rmsNormalise(floatSamples.copyOf())
+                                      else floatSamples
+                        val pcm = floatToPcm16(samples)
+                        chunkPcm.add(pcm)
 
-                        try {
-                            queue.put(QueueItem.Data(pcmBytes, pcmBytes.size))
-                        } catch (_: InterruptedException) {
+                        try { queue.put(QueueItem.Data(pcm, pcm.size)) }
+                        catch (_: InterruptedException) {
                             return@generateWithConfigAndCallback 0
                         }
-
                         if (cancelled.get()) 0 else 1
+                    }
+
+                    // Merge all PCM chunks for this clause and cache them
+                    if (key != null && chunkPcm.isNotEmpty() && !cancelled.get()) {
+                        val total = chunkPcm.sumOf { it.size }
+                        val merged = ByteArray(total)
+                        var pos = 0
+                        for (c in chunkPcm) { c.copyInto(merged, pos); pos += c.size }
+                        synchronized(audioCache) { audioCache[key] = merged }
                     }
                 }
 
@@ -296,33 +372,25 @@ class TtsService : TextToSpeechService() {
                 Log.e(TAG, "Generator error", t)
                 queue.offer(QueueItem.Error(t))
             }
-        }.apply {
-            name     = "SherpaTtsGenerator"
-            isDaemon = true
         }
 
-        generatorThread.start()
-
-        // Consumer: drains the queue into Android's audioAvailable()
+        // ── Consumer (runs on TTS framework thread) ───────────────────────────
         try {
             while (true) {
                 when (val item = queue.take()) {
                     is QueueItem.End  -> break
-
                     is QueueItem.Data -> {
                         if (cancelled.get()) break
                         val maxBuf = callback.maxBufferSize.coerceAtLeast(4096)
                         var offset = 0
-                        val total  = item.length
-                        while (offset < total && !cancelled.get()) {
-                            var chunk = minOf(maxBuf, total - offset)
+                        while (offset < item.length && !cancelled.get()) {
+                            var chunk = minOf(maxBuf, item.length - offset)
                             if (chunk % 2 != 0) chunk--
                             if (chunk <= 0) break
                             callback.audioAvailable(item.bytes, offset, chunk)
                             offset += chunk
                         }
                     }
-
                     is QueueItem.Error -> {
                         Log.e(TAG, "Generator thread error", item.t)
                         callback.error(TextToSpeech.ERROR_OUTPUT)
@@ -332,7 +400,6 @@ class TtsService : TextToSpeechService() {
                 }
             }
             if (!cancelled.get()) callback.done()
-
         } catch (e: InterruptedException) {
             Log.w(TAG, "Consumer interrupted", e)
             cancelled.set(true)
@@ -343,24 +410,16 @@ class TtsService : TextToSpeechService() {
         }
     }
 
+
+    // ── Constants ─────────────────────────────────────────────────────────────
+
     companion object {
-        private const val TAG = "TtsService"
-
-        /**
-         * Minimum number of words a clause must contain before we split on
-         * soft punctuation (, ; : — …).
-         *
-         * 4 words ≈ ~1.2 seconds of audio at normal speed — short enough to
-         * start playback quickly, long enough to avoid splitting phrases like
-         * "Yes, I see." (3 words, below threshold) into two fragments.
-         */
+        private const val TAG              = "TtsService"
         private const val MIN_CLAUSE_WORDS = 6
-
-        /**
-         * Short text used to warm up ONNX Runtime on startup.
-         * Must be non-empty and long enough to exercise all model layers.
-         * The output is discarded; callback immediately returns 0 (stop).
-         */
-        private const val WARMUP_TEXT = "The quick brown fox."  // long enough to exercise full ONNX graph
+        private const val WARMUP_TEXT      = "The quick brown fox."
+        // RMS normalisation parameters
+        private const val TARGET_RMS = 0.08f   // -21.9 dBFS
+        private const val RMS_FLOOR  = 0.001f  // skip near-silent chunks
+        private const val MAX_GAIN   = 4.0f    // cap at +12 dB to avoid noise amplification
     }
 }
